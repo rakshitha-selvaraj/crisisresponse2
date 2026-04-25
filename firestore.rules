@@ -1,0 +1,102 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Universal Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function getRole() {
+      // Return 'user' by default if document doesn't exist yet
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid)) ? 
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role : 'user';
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'rakshithaselvaraj83@gmail.com' ||
+        request.auth.token.email == '46.rakshitha.s.9a@gmail.com' ||
+        getRole() == 'admin'
+      );
+    }
+
+    function hasRole(role) {
+      return isSignedIn() && (getRole() == role || isAdmin());
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // --- Validation Helpers ---
+    function isValidUser(data) {
+      return data.keys().hasAll(['email', 'role', 'createdAt']) &&
+             data.email is string && data.email.size() <= 256 &&
+             data.role in ['user', 'volunteer', 'admin'] &&
+             (!('currentLocation' in data) || (data.currentLocation.lat is number && data.currentLocation.lng is number));
+    }
+
+    function isValidIncident(data) {
+      return data.keys().hasAll(['userId', 'type', 'description', 'status', 'location', 'createdAt']) &&
+             data.userId == request.auth.uid &&
+             data.type is string && data.type.size() <= 100 &&
+             data.description is string && data.description.size() <= 2000 &&
+             data.status in ['reported', 'allocating', 'in_progress', 'resolved'] &&
+             (
+               (data.location.keys().hasAll(['lat', 'lng']) && data.location.lat is number && data.location.lng is number) ||
+               (data.location.keys().hasAll(['address']) && data.location.address is string)
+             );
+    }
+
+    // --- Collection Rules ---
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow create: if isOwner(userId) && isValidUser(incoming());
+      allow update: if (isOwner(userId) && isValidUser(incoming()) && incoming().role == existing().role) || hasRole('admin');
+      allow list: if hasRole('admin') || hasRole('volunteer');
+    }
+
+    match /incidents/{incidentId} {
+      // Allow list if you own the record or have a responder role
+      allow list: if isSignedIn() && (
+        resource.data.userId == request.auth.uid || 
+        hasRole('volunteer') || 
+        hasRole('admin')
+      );
+      
+      allow get: if isSignedIn() && (
+        resource.data.userId == request.auth.uid || 
+        hasRole('volunteer') || 
+        hasRole('admin')
+      );
+
+      allow create: if isSignedIn() && isValidIncident(incoming()) && incoming().createdAt == request.time;
+
+      allow update: if isSignedIn() && (
+        // User can update their own reported incidents (e.g. they can't change much but maybe status to resolved if they fixed it, or just description)
+        (isOwner(existing().userId) && incoming().userId == existing().userId) ||
+        // Volunteers can update status
+        hasRole('volunteer') ||
+        // Admins have full update power
+        hasRole('admin')
+      );
+    }
+  }
+}

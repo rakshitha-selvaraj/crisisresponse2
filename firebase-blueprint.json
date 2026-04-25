@@ -1,0 +1,64 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "System user profile, can be admin, volunteer, or regular user.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string", "enum": ["user", "volunteer", "admin"] },
+        "serviceType": { "type": "string", "enum": ["paramedic", "rescue_team", "firefighter", "general"] },
+        "currentLocation": {
+          "type": "object",
+          "properties": {
+            "lat": { "type": "number" },
+            "lng": { "type": "number" }
+          }
+        },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email", "role", "createdAt"]
+    },
+    "Incident": {
+      "title": "Incident",
+      "description": "Represents an emergency reported by a user.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "UID of the reporting user" },
+        "userName": { "type": "string" },
+        "type": { "type": "string" },
+        "description": { "type": "string" },
+        "urgency": { "type": "string", "enum": ["low", "medium", "high", "critical"] },
+        "status": { "type": "string", "enum": ["reported", "allocating", "in_progress", "resolved"] },
+        "location": {
+          "type": "object",
+          "properties": {
+            "lat": { "type": "number" },
+            "lng": { "type": "number" },
+            "address": { "type": "string" }
+          }
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "assignedVolunteerId": { "type": "string" },
+        "aiReportSummary": { "type": "string" },
+        "aiPrioritization": { "type": "string" },
+        "escalatedAt": { "type": "string", "format": "date-time" },
+        "autoAssignedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "type", "description", "status", "location", "createdAt"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": "User",
+      "description": "User profiles and roles."
+    },
+    "incidents/{incidentId}": {
+      "schema": "Incident",
+      "description": "Collection of all emergency incidents."
+    }
+  }
+}
