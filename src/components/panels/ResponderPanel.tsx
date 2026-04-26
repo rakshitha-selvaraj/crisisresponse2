@@ -59,12 +59,12 @@ function MapRefocuser({ incidents }: { incidents: Incident[] }) {
 
 export default function ResponderPanel() {
   const [incidents, setIncidents] = useState<Incident[]>([]);
-  const [volunteers, setVolunteers] = useState<UserProfile[]>([]);
+  const [activeResponders, setActiveResponders] = useState<UserProfile[]>([]);
   const [stats, setStats] = useState({
-    active: 0,
+    total: 0,
     critical: 0,
     resolved: 0,
-    unhandled: 0
+    pending: 0
   });
 
   useEffect(() => {
@@ -74,10 +74,10 @@ export default function ResponderPanel() {
       setIncidents(data);
 
       setStats({
-        active: data.filter(i => i.status !== 'resolved').length,
+        total: data.length,
         critical: data.filter(i => i.urgency === 'critical' && i.status !== 'resolved').length,
         resolved: data.filter(i => i.status === 'resolved').length,
-        unhandled: data.filter(i => i.status === 'reported').length
+        pending: data.filter(i => i.status !== 'resolved' && (Date.now() - (i.createdAt?.seconds * 1000 || Date.now())) > 120000).length
       });
     }, (error) => {
       handleFirestoreError(error, OperationType.GET, 'incidents');
@@ -87,10 +87,10 @@ export default function ResponderPanel() {
   }, []);
 
   useEffect(() => {
-    const q = query(collection(db, 'users'), where('role', '==', 'volunteer'));
+    const q = query(collection(db, 'users'), where('isAvailable', '==', true));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map(doc => doc.data() as UserProfile);
-      setVolunteers(data);
+      setActiveResponders(data);
     });
     return () => unsubscribe();
   }, []);
@@ -121,27 +121,26 @@ export default function ResponderPanel() {
       {/* Stats Strip */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 px-4">
         <StatCard 
+          icon={<Activity className="text-blue-500" />} 
+          label="Total Reports" 
+          value={stats.total} 
+        />
+        <StatCard 
           icon={<ShieldAlert className="text-red-500" />} 
           label="Critical Active" 
           value={stats.critical} 
           isAlert={stats.critical > 0}
         />
         <StatCard 
-          icon={<AlertCircle className="text-yellow-500" />} 
-          label="Unhandled Alerts" 
-          value={stats.unhandled} 
-          isAlert={stats.unhandled > 3}
-          trend="ACTION REQ"
+          icon={<Users className="text-green-500" />} 
+          label="Responders On-Duty" 
+          value={activeResponders.length} 
         />
         <StatCard 
-          icon={<Users className="text-blue-500" />} 
-          label="Available Units" 
-          value={volunteers.length} 
-        />
-        <StatCard 
-          icon={<CheckCircle2 className="text-green-500" />} 
-          label="Resolved Today" 
-          value={stats.resolved} 
+          icon={<AlertTriangle className="text-yellow-500" />} 
+          label="Delayed Response" 
+          value={stats.pending} 
+          isAlert={stats.pending > 0}
         />
       </div>
 
@@ -170,7 +169,12 @@ export default function ResponderPanel() {
                    )}>
                      {incident.urgency}
                    </span>
-                   {incident.status === 'reported' && (Date.now() - (incident.createdAt?.seconds * 1000 || 0)) > 120000 && (
+                   {incident.isReassigned && (
+                     <span className="text-[8px] bg-red-950/40 text-red-400 border border-red-900/50 px-1.5 py-0.5 rounded font-black uppercase tracking-widest flex items-center gap-1 shrink-0">
+                       <AlertTriangle size={8} /> Reassigned
+                     </span>
+                   )}
+                   {incident.status === 'reported' && !incident.isReassigned && (Date.now() - (incident.createdAt?.seconds * 1000 || 0)) > 30000 && (
                      <AlertTriangle size={12} className="text-yellow-500 animate-bounce" />
                    )}
                  </div>
@@ -186,14 +190,19 @@ export default function ResponderPanel() {
                  >
                    Resolve
                  </button>
-                 {incident.status === 'reported' && (
-                   <button 
-                    onClick={() => handleUpdate(incident.id, { urgency: 'critical', status: 'allocating' })}
-                    className="flex-1 py-2 bg-red-900/20 text-red-500 border border-red-900/50 rounded-lg text-[8px] font-black uppercase hover:bg-red-600 hover:text-white transition-all"
-                   >
-                     Force Allocate
-                   </button>
-                 )}
+                 {incident.status !== 'resolved' && (
+                    <button 
+                      onClick={() => handleUpdate(incident.id, { 
+                        responderVehicleId: `UNIT-REASSIGN-${Math.floor(Math.random()*900)+100}`,
+                        status: 'assigned',
+                        urgency: 'critical',
+                        systemNote: 'Admin Force Reassigned'
+                      })}
+                      className="flex-1 py-2 bg-purple-900/20 text-purple-500 border border-purple-900/50 rounded-lg text-[8px] font-black uppercase hover:bg-purple-600 hover:text-white transition-all"
+                    >
+                      Force Reassign
+                    </button>
+                  )}
               </div>
             </div>
           ))}

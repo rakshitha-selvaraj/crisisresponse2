@@ -45,6 +45,96 @@ export default function UserPanel() {
   const [report, setReport] = useState('');
   const [address, setAddress] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [offlineQueue, setOfflineQueue] = useState<any[]>([]);
+
+  // Monitor online/offline status
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      processOfflineQueue();
+    };
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  const processOfflineQueue = async () => {
+    const queue = JSON.parse(localStorage.getItem('emergency_queue') || '[]');
+    if (queue.length === 0) return;
+    
+    for (const item of queue) {
+      try {
+        await addDoc(collection(db, 'incidents'), {
+          ...item,
+          createdAt: serverTimestamp(),
+          syncedAt: serverTimestamp()
+        });
+      } catch (err) {
+        console.error("Failed to sync offline report", err);
+      }
+    }
+    localStorage.removeItem('emergency_queue');
+    setOfflineQueue([]);
+  };
+
+  const handlePanic = async () => {
+    if (!auth.currentUser) return;
+    setIsSubmitting(true);
+    
+    // Quick GPS capture
+    let lat = 12.9716;
+    let lng = 77.5946;
+    
+    if (navigator.geolocation) {
+      try {
+        const pos = await new Promise<GeolocationPosition>((res, rej) => {
+          navigator.geolocation.getCurrentPosition(res, rej, { timeout: 5000 });
+        });
+        lat = pos.coords.latitude;
+        lng = pos.coords.longitude;
+      } catch (e) {
+        console.warn("GPS failed for panic, using default", e);
+      }
+    }
+
+    const payload = {
+      userId: auth.currentUser.uid,
+      userName: auth.currentUser.displayName || "Emergency User",
+      description: "PANIC ALERT: USER-TRIGGERED EMERGENCY",
+      type: 'medical',
+      urgency: 'critical',
+      status: 'assigned',
+      responderVehicleId: 'AMB-PANIC-01',
+      responderType: 'ambulance',
+      responderLocation: { lat: lat + 0.01, lng: lng + 0.01 },
+      location: { lat, lng, address: "GPS PINPOINT LOCATION" },
+      isPanic: true,
+      createdAt: serverTimestamp()
+    };
+
+    if (!navigator.onLine) {
+      const queue = JSON.parse(localStorage.getItem('emergency_queue') || '[]');
+      queue.push({ ...payload, createdAt: null }); // serverTimestamp doesn't work offline in pure object
+      localStorage.setItem('emergency_queue', JSON.stringify(queue));
+      setOfflineQueue(queue);
+      alert("OFFLINE MODE: Emergency queued for sync.");
+      setIsSubmitting(false);
+      return;
+    }
+
+    try {
+      await addDoc(collection(db, 'incidents'), payload);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, 'incidents');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [location, setLocation] = useState<{lat: number, lng: number} | null>(null);
   const [gpsLoading, setGpsLoading] = useState(false);
@@ -101,13 +191,19 @@ export default function UserPanel() {
       const aiResponse = await classifyEmergency(report);
       const doorInfo = (document.getElementById('door-info') as HTMLInputElement)?.value || '';
       
+      const lat = location?.lat || 12.9716;
+      const lng = location?.lng || 77.5946;
+
       await addDoc(collection(db, 'incidents'), {
         userId: auth.currentUser.uid,
         userName: auth.currentUser.displayName,
         description: report,
-        type: aiResponse.type || 'other',
+        type: aiResponse.type || 'volunteer',
         urgency: aiResponse.urgency || 'medium',
-        status: 'reported',
+        status: 'assigned',
+        responderType: aiResponse.type || 'volunteer',
+        responderVehicleId: aiResponse.vehicleId || 'VOL-000',
+        responderLocation: { lat: lat + 0.01, lng: lng + 0.01 },
         location: location ? 
           { lat: location.lat, lng: location.lng, address: address, doorInfo } : 
           { address: address, doorInfo }, 
@@ -202,7 +298,22 @@ export default function UserPanel() {
               >
                 {isSubmitting ? "Processing..." : "Send Help Signal"}
               </button>
+
+              <button
+                onClick={handlePanic}
+                disabled={isSubmitting}
+                className="w-full sm:w-auto px-12 py-4 bg-orange-600 rounded-xl font-black text-xs uppercase tracking-[0.2em] text-white animate-pulse shadow-lg hover:bg-orange-700 transition-all"
+              >
+                PANIC
+              </button>
             </div>
+            
+            {!isOnline && (
+              <div className="mt-4 p-4 bg-yellow-900/20 border border-yellow-900/50 rounded-xl flex items-center gap-3">
+                <AlertCircle className="text-yellow-500" size={20} />
+                <p className="text-[10px] font-mono text-yellow-500 uppercase tracking-widest">Device Offline // Queueing Reports ({offlineQueue.length})</p>
+              </div>
+            )}
           </div>
         </section>
 
@@ -226,7 +337,7 @@ export default function UserPanel() {
               {selectedIncident.responderLocation && (
                 <Marker position={[selectedIncident.responderLocation.lat, selectedIncident.responderLocation.lng]} icon={vehicleIcon(selectedIncident.responderType || 'fire')}>
                   <Popup className="dark-popup">
-                    <span className="text-white font-bold">Responder is {selectedIncident.status.replace('_', ' ')}</span>
+                    <span className="text-white font-bold">{selectedIncident.responderVehicleId || 'Vehicle'} is {selectedIncident.status.replace('_', ' ')}</span>
                   </Popup>
                 </Marker>
               )}

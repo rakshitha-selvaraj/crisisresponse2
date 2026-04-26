@@ -26,12 +26,14 @@ export interface Incident {
     lat: number;
     lng: number;
     address?: string;
+    doorInfo?: string;
   };
   responderLocation?: {
     lat: number;
     lng: number;
   };
   responderType?: 'fire' | 'ambulance' | 'volunteer';
+  responderVehicleId?: string;
   createdAt: any;
   updatedAt?: any;
   aiReportSummary?: string;
@@ -40,4 +42,5 @@ export interface Incident {
   assignedVolunteerId?: string;
   assignedResponderId?: string;
   autoAssignedAt?: any;
+  isPanic?: boolean;
 }

@@ -6,15 +6,25 @@ export async function classifyEmergency(description: string) {
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: `Classify this emergency report.
-      Urgency levels: low, medium, high, critical.
-      Emergency Types: fire, medical, volunteer (for general help), other.
+      contents: `You are an AI Dispatcher. Classify this emergency report.
       
-      Fire examples: fire, explosion, chemical spill.
-      Medical examples: injury, heart attack, unconscious, bleeding.
-      Volunteer examples: stuck, need food/water, minor assistance.
-      
-      Provide the result in JSON format with keys 'urgency', 'type', and a brief 'summary'.
+      Priority Rules:
+      - CRITICAL: "fire", "explosion", "chest pain", "stopped breathing", "gunshot", "trapped".
+      - HIGH: "accident", "heavy bleeding", "visible bone", "unconscious".
+      - MEDIUM: "minor injury", "fever", "property damage".
+      - LOW: "local assistance", "stuck", "information inquiry".
+
+      Emergency Types: 
+      - fire: Smoke, fire, explosion, chemical.
+      - medical: Injuries, heart issues, sickness, psychological.
+      - volunteer: General help, food/water, movement assistance.
+
+      Assign a random Mock Vehicle ID based on type:
+      - fire: FT-xxx (e.g., FT-001)
+      - medical: AMB-xxx (e.g., AMB-501)
+      - volunteer: VOL-xxx (e.g., VOL-101)
+
+      Respond ONLY in JSON with: "urgency" (low, medium, high, critical), "type" (fire, medical, volunteer), "summary", and "vehicleId".
       Report: "${description}"`,
       config: {
         responseMimeType: "application/json"
@@ -24,7 +34,7 @@ export async function classifyEmergency(description: string) {
     return JSON.parse(response.text);
   } catch (error) {
     console.error("AI Classification Error:", error);
-    return { urgency: "medium", type: "other", summary: "Auto-classified due to processing error." };
+    return { urgency: "medium", type: "volunteer", summary: "Auto-classified due to processing error.", vehicleId: "VOL-000" };
   }
 }
 
