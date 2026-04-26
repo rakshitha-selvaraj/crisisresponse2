@@ -2,13 +2,13 @@
   "entities": {
     "User": {
       "title": "User",
-      "description": "System user profile, can be admin, volunteer, or regular user.",
+      "description": "System user profile, can be admin, volunteer, fire_station, ambulance, or regular user.",
       "type": "object",
       "properties": {
         "uid": { "type": "string" },
         "email": { "type": "string" },
         "name": { "type": "string" },
-        "role": { "type": "string", "enum": ["user", "volunteer", "admin"] },
+        "role": { "type": "string", "enum": ["user", "volunteer", "admin", "fire_station", "ambulance"] },
         "serviceType": { "type": "string", "enum": ["paramedic", "rescue_team", "firefighter", "general"] },
         "currentLocation": {
           "type": "object",
@@ -31,7 +31,7 @@
         "type": { "type": "string" },
         "description": { "type": "string" },
         "urgency": { "type": "string", "enum": ["low", "medium", "high", "critical"] },
-        "status": { "type": "string", "enum": ["reported", "allocating", "in_progress", "resolved"] },
+        "status": { "type": "string", "enum": ["reported", "allocating", "assigned", "on_the_way", "reached", "resolved"] },
         "location": {
           "type": "object",
           "properties": {
@@ -40,9 +40,18 @@
             "address": { "type": "string" }
           }
         },
+        "responderLocation": {
+          "type": "object",
+          "properties": {
+            "lat": { "type": "number" },
+            "lng": { "type": "number" }
+          }
+        },
+        "responderType": { "type": "string", "enum": ["fire", "ambulance", "volunteer"] },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" },
         "assignedVolunteerId": { "type": "string" },
+        "assignedResponderId": { "type": "string" },
         "aiReportSummary": { "type": "string" },
         "aiPrioritization": { "type": "string" },
         "escalatedAt": { "type": "string", "format": "date-time" },

@@ -16,21 +16,24 @@ import {
   signOut,
   User
 } from 'firebase/auth';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from './services/firebase';
 import UserPanel from './components/panels/UserPanel';
 import VolunteerPanel from './components/panels/VolunteerPanel';
 import ResponderPanel from './components/panels/ResponderPanel';
+import FireDashboard from './components/panels/FireDashboard';
+import AmbulanceDashboard from './components/panels/AmbulanceDashboard';
 import AIAssistant from './components/AIAssistant';
 import { cn } from './lib/utils';
 import { handleFirestoreError, OperationType } from './lib/errorHandlers';
 
-type UserRole = 'user' | 'volunteer' | 'admin';
+type UserRole = 'user' | 'volunteer' | 'admin' | 'fire_station' | 'ambulance';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [role, setRole] = useState<UserRole | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
@@ -69,6 +72,8 @@ export default function App() {
   }, []);
 
   const login = async (requestedRole: UserRole) => {
+    if (isLoggingIn) return;
+    setIsLoggingIn(true);
     try {
       const provider = new GoogleAuthProvider();
       const result = await signInWithPopup(auth, provider);
@@ -88,7 +93,7 @@ export default function App() {
             email: user.email,
             role: requestedRole,
             name: user.displayName,
-            createdAt: new Date()
+            createdAt: serverTimestamp()
           });
           setRole(requestedRole);
         } catch (err) {
@@ -104,11 +109,12 @@ export default function App() {
         }
       }
     } catch (error: any) {
-      // Handle user cancellation silently
-      if (error.code === 'auth/user-cancelled' || error.code === 'auth/popup-closed-by-user') {
+      if (error.code === 'auth/user-cancelled' || error.code === 'auth/popup-closed-by-user' || error.code === 'auth/cancelled-popup-request') {
         return;
       }
       console.error("Login failed:", error);
+    } finally {
+      setIsLoggingIn(false);
     }
   };
 
@@ -145,7 +151,7 @@ export default function App() {
              <p className="text-gray-500 font-mono text-xs uppercase tracking-widest">Select your login portal</p>
           </div>
 
-          <div className="grid md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 max-w-[1400px] mx-auto">
             <LoginCard 
               title="Help"
               description="Click here if you need emergency assistance."
@@ -167,9 +173,29 @@ export default function App() {
             />
 
             <LoginCard 
-              title="Official"
-              description="Official command center for responders."
-              icon={<ShieldAlert size={28} />}
+              title="Fire Dept"
+              description="Dispatch for Fire Station teams."
+              icon={<ShieldAlert size={28} className="text-orange-500" />}
+              color="text-orange-500"
+              bgColor="bg-orange-950/20"
+              buttonLabel="Login"
+              onClick={() => login('fire_station')}
+            />
+
+            <LoginCard 
+              title="Medical"
+              description="Dispatch for Ambulance providers."
+              icon={<ShieldAlert size={28} className="text-green-500" />}
+              color="text-green-500"
+              bgColor="bg-green-950/20"
+              buttonLabel="Login"
+              onClick={() => login('ambulance')}
+            />
+
+            <LoginCard 
+              title="Admin"
+              description="Official dashboard for overseers."
+              icon={<LayoutDashboard size={28} className="text-purple-500" />}
               color="text-purple-500"
               bgColor="bg-purple-950/20"
               buttonLabel="Login"
@@ -207,6 +233,24 @@ export default function App() {
               id="nav-volunteer"
               icon={<Truck size={20} />} 
               label="Available Tasks" 
+              active={true} 
+              onClick={() => {}} 
+            />
+          )}
+          {role === 'fire_station' && (
+            <NavItem 
+              id="nav-fire"
+              icon={<ShieldAlert size={20} />} 
+              label="Fire Dispatch" 
+              active={true} 
+              onClick={() => {}} 
+            />
+          )}
+          {role === 'ambulance' && (
+            <NavItem 
+              id="nav-ambulance"
+              icon={<ShieldAlert size={20} />} 
+              label="EMS Dispatch" 
               active={true} 
               onClick={() => {}} 
             />
@@ -251,6 +295,8 @@ export default function App() {
         <div className="p-6 max-w-[1400px] mx-auto">
           {role === 'user' && <UserPanel />}
           {role === 'volunteer' && <VolunteerPanel />}
+          {role === 'fire_station' && <FireDashboard />}
+          {role === 'ambulance' && <AmbulanceDashboard />}
           {role === 'admin' && <ResponderPanel />}
         </div>
         <AIAssistant />

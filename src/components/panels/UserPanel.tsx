@@ -2,11 +2,44 @@ import React, { useState, useEffect } from 'react';
 import { collection, addDoc, query, where, onSnapshot, orderBy, serverTimestamp } from 'firebase/firestore';
 import { db, auth } from '../../services/firebase';
 import { classifyEmergency } from '../../services/aiService';
-import { AlertCircle, Send, MapPin, Clock, CheckCircle2, Navigation, ShieldAlert, Truck, Bot } from 'lucide-react';
+import { AlertCircle, Send, MapPin, Clock, CheckCircle2, Navigation, ShieldAlert, Truck, Bot, Activity } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { Incident } from '../../types';
+import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from 'react-leaflet';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 
 import { handleFirestoreError, OperationType } from '../../lib/errorHandlers';
+
+// Custom icons for map
+const personIcon = L.divIcon({
+  className: 'custom-div-icon',
+  html: `<div style="background-color: #3b82f6; width: 12px; height: 12px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 10px rgba(59,130,246,0.5);"></div>`,
+  iconSize: [12, 12],
+  iconAnchor: [6, 6]
+});
+
+const vehicleIcon = (type: string) => {
+  let icon = '🚑';
+  let color = '#22c55e';
+  
+  if (type === 'fire') {
+    icon = '🔥';
+    color = '#f97316';
+  } else if (type === 'volunteer' || type === 'other') {
+    icon = '🤝';
+    color = '#3b82f6';
+  }
+
+  return L.divIcon({
+    className: 'custom-div-icon',
+    html: `<div style="background-color: ${color}; width: 24px; height: 24px; border-radius: 6px; display: flex; align-items: center; justify-content: center; border: 2px solid white; box-shadow: 0 0 15px rgba(0,0,0,0.5); color: white; font-size: 14px;">
+      ${icon}
+    </div>`,
+    iconSize: [24, 24],
+    iconAnchor: [12, 12]
+  });
+};
 
 export default function UserPanel() {
   const [report, setReport] = useState('');
@@ -15,6 +48,7 @@ export default function UserPanel() {
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [location, setLocation] = useState<{lat: number, lng: number} | null>(null);
   const [gpsLoading, setGpsLoading] = useState(false);
+  const [selectedIncident, setSelectedIncident] = useState<Incident | null>(null);
 
   const getGPSLocation = () => {
     setGpsLoading(true);
@@ -23,7 +57,6 @@ export default function UserPanel() {
         (pos) => {
           setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
           setGpsLoading(false);
-          // When GPS is found, we can optionally populate the address field or just use the lat/lng
           setAddress(`GPS Fix: ${pos.coords.latitude?.toFixed(4) || '0.0000'}, ${pos.coords.longitude?.toFixed(4) || '0.0000'}`);
         },
         (err) => {
@@ -39,7 +72,6 @@ export default function UserPanel() {
     const currentUser = auth.currentUser;
     if (!currentUser) return;
 
-    // Filter by authenticated userId for isolation
     const q = query(
       collection(db, 'incidents'),
       where('userId', '==', currentUser.uid),
@@ -49,13 +81,14 @@ export default function UserPanel() {
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Incident));
       setIncidents(data);
+      if (data.length > 0 && !selectedIncident) {
+        setSelectedIncident(data[0]);
+      }
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, 'incidents');
     });
 
-    return () => {
-      unsubscribe();
-    };
+    return () => unsubscribe();
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -65,10 +98,9 @@ export default function UserPanel() {
 
     setIsSubmitting(true);
     try {
-      // 1. AI Classification
       const aiResponse = await classifyEmergency(report);
+      const doorInfo = (document.getElementById('door-info') as HTMLInputElement)?.value || '';
       
-      // 2. Submit to Firebase
       await addDoc(collection(db, 'incidents'), {
         userId: auth.currentUser.uid,
         userName: auth.currentUser.displayName,
@@ -76,7 +108,9 @@ export default function UserPanel() {
         type: aiResponse.type || 'other',
         urgency: aiResponse.urgency || 'medium',
         status: 'reported',
-        location: location || { address: address }, 
+        location: location ? 
+          { lat: location.lat, lng: location.lng, address: address, doorInfo } : 
+          { address: address, doorInfo }, 
         createdAt: serverTimestamp(),
         aiReportSummary: aiResponse.summary
       });
@@ -84,6 +118,7 @@ export default function UserPanel() {
       setReport('');
       setAddress('');
       setLocation(null);
+      if (document.getElementById('door-info')) (document.getElementById('door-info') as HTMLInputElement).value = '';
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, 'incidents');
     } finally {
@@ -95,7 +130,7 @@ export default function UserPanel() {
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
       {/* AI Reporting Section */}
       <div className="lg:col-span-2 space-y-6">
-        <section className="bg-[#0F1115] border border-gray-800 rounded-2xl overflow-hidden shadow-2xl mb-12">
+        <section className="bg-[#0F1115] border border-gray-800 rounded-2xl overflow-hidden shadow-2xl">
           <div className="p-6 border-b border-gray-800 flex items-center justify-between bg-black/20">
             <div className="flex items-center gap-4">
               <div className="w-10 h-10 bg-red-600 rounded-lg flex items-center justify-center shadow-[0_0_15px_rgba(220,38,38,0.3)]">
@@ -131,23 +166,30 @@ export default function UserPanel() {
                 />
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-                <div className="sm:col-span-3">
-                  <input 
-                    type="text"
-                    value={address}
-                    onChange={(e) => setAddress(e.target.value)}
-                    placeholder="Enter manual address or landmark..."
-                    className="w-full p-4 bg-black border border-gray-800 rounded-xl focus:ring-1 focus:ring-red-500 focus:border-red-500/50 text-gray-300 font-mono text-sm"
-                  />
-                </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <input 
+                  type="text"
+                  value={address}
+                  onChange={(e) => setAddress(e.target.value)}
+                  placeholder="Street Address / Landmark"
+                  className="w-full p-4 bg-black border border-gray-800 rounded-xl focus:ring-1 focus:ring-red-500 focus:border-red-500/50 text-gray-300 font-mono text-sm"
+                />
+                <input 
+                  type="text"
+                  id="door-info"
+                  placeholder="Floor / Door Number / Flat Details"
+                  className="w-full p-4 bg-black border border-gray-800 rounded-xl focus:ring-1 focus:ring-red-500 focus:border-red-500/50 text-gray-300 font-mono text-sm"
+                />
+              </div>
+
+              <div className="flex gap-4">
                 <button
                   type="button"
                   onClick={getGPSLocation}
                   disabled={gpsLoading}
-                  className="bg-gray-900 text-blue-500 border border-gray-800 rounded-xl hover:bg-gray-800 transition-all font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2"
+                  className="flex-1 bg-gray-900 text-blue-500 border border-gray-800 py-4 rounded-xl hover:bg-gray-800 transition-all font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2"
                 >
-                  <MapPin size={14} /> {gpsLoading ? 'Wait...' : 'Get GPS'}
+                  <MapPin size={14} /> {gpsLoading ? 'Acquiring...' : 'Use My GPS Position'}
                 </button>
               </div>
             </div>
@@ -160,118 +202,137 @@ export default function UserPanel() {
               >
                 {isSubmitting ? "Processing..." : "Send Help Signal"}
               </button>
-              
-              <div className="text-center sm:text-right">
-                <p className="text-[9px] font-mono text-gray-600 uppercase tracking-widest leading-tight">Encryption: E2EE</p>
-                <p className="text-[9px] font-mono text-blue-500 uppercase tracking-widest mt-1">Satellite: RESCUE-01</p>
-              </div>
             </div>
           </div>
         </section>
 
-
-        {/* Active tracking List */}
-        <div className="space-y-4">
-          <div className="flex items-center justify-between px-2">
-            <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-600 flex items-center gap-2">
-               Incident Logs
-            </h4>
-            <span className="text-[10px] font-mono text-gray-700">TOTAL_ACTIVE: {incidents.length}</span>
-          </div>
-          
-          {incidents.map((incident) => (
-            <div key={incident.id} className={cn(
-              "bg-[#0F1115] p-5 rounded-xl border border-gray-800 hover:border-red-500/30 transition-all flex items-start gap-5 group",
-              incident.urgency === 'critical' && "bg-red-950/10 border-red-900/50"
-            )}>
-              <div className={cn(
-                "w-12 h-12 rounded-lg flex items-center justify-center relative",
-                incident.urgency === 'critical' ? 'bg-red-600 text-white shadow-[0_0_15px_rgba(220,38,38,0.4)]' :
-                incident.urgency === 'high' ? 'bg-orange-600 text-white' : 'bg-blue-600 text-white'
-              )}>
-                <Navigation size={20} className={cn(incident.status === 'in_progress' && "animate-pulse")} />
-                {incident.urgency === 'critical' && (
-                  <span className="absolute -top-1 -right-1 flex h-3 w-3">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
-                  </span>
-                )}
-              </div>
+        {/* Live Tracking Map for Selected Incident */}
+        {selectedIncident && selectedIncident.location?.lat && (
+          <section className="bg-[#0F1115] border border-gray-800 rounded-2xl overflow-hidden h-[500px] relative shadow-2xl group">
+            <MapContainer 
+              center={[selectedIncident.location.lat, selectedIncident.location.lng]} 
+              zoom={15} 
+              className="h-full w-full"
+              zoomControl={false}
+            >
+              <TileLayer
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+              />
+              <Marker position={[selectedIncident.location.lat, selectedIncident.location.lng]} icon={personIcon}>
+                <Popup className="dark-popup">You are here</Popup>
+              </Marker>
               
-              <div className="flex-1">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-red-400">{incident.type}</span>
-                  <span className="text-[9px] font-mono text-gray-600">ID://{incident.id.slice(0, 8).toUpperCase()}</span>
-                </div>
-                <p className="text-sm font-medium text-gray-300 mb-4 line-clamp-2 leading-relaxed">
-                   {incident.description}
-                </p>
-                
-                <div className="flex items-center gap-6 pt-4 border-t border-gray-800/50">
-                   <StatusBadge status={incident.status} />
-                   <div className="flex items-center gap-2 text-[10px] font-mono text-gray-500 ml-auto">
-                      <Clock size={12} className="text-gray-600" />
-                      {new Date(incident.createdAt?.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                   </div>
-                </div>
+              {selectedIncident.responderLocation && (
+                <Marker position={[selectedIncident.responderLocation.lat, selectedIncident.responderLocation.lng]} icon={vehicleIcon(selectedIncident.responderType || 'fire')}>
+                  <Popup className="dark-popup">
+                    <span className="text-white font-bold">Responder is {selectedIncident.status.replace('_', ' ')}</span>
+                  </Popup>
+                </Marker>
+              )}
+              
+              <MapUpdater center={[selectedIncident.location.lat, selectedIncident.location.lng]} />
+            </MapContainer>
+            
+            {/* Tracking Overlay UI */}
+            <div className="absolute inset-x-0 bottom-0 p-6 bg-gradient-to-t from-black via-black/80 to-transparent z-[1000]">
+               <div className="bg-[#1A1D23]/90 backdrop-blur-xl border border-gray-800 p-6 rounded-2xl shadow-2xl flex items-center gap-6">
+                  <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center text-white shadow-lg animate-pulse">
+                    {selectedIncident.responderType === 'ambulance' ? <Activity size={32} /> : <ShieldAlert size={32} />}
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between mb-2">
+                       <h4 className="text-xl font-black text-white uppercase tracking-tighter">
+                         {selectedIncident.status === 'on_the_way' ? "Rescue En Route" : 
+                          selectedIncident.status === 'assigned' ? "Rescue Assigned" :
+                          selectedIncident.status === 'reached' ? "Rescue Arrived" : "Processing Signal"}
+                       </h4>
+                       <StatusBadge status={selectedIncident.status} />
+                    </div>
+                    <div className="flex items-center gap-4">
+                        <div className="flex-1 h-1 bg-gray-800 rounded-full overflow-hidden">
+                          <div className={cn(
+                            "h-full bg-blue-500 transition-all duration-1000",
+                            selectedIncident.status === 'reported' ? "w-1/4" :
+                            selectedIncident.status === 'assigned' ? "w-1/2" :
+                            selectedIncident.status === 'on_the_way' ? "w-3/4" : "w-full"
+                          )}></div>
+                        </div>
+                        <p className="text-[10px] font-mono text-gray-500 uppercase">ETA: {selectedIncident.status === 'on_the_way' ? "~4 MINS" : "--"}</p>
+                    </div>
+                  </div>
+               </div>
+            </div>
+
+            <div className="absolute top-4 left-4 z-[1000]">
+               <div className="bg-[#0F1115]/80 backdrop-blur-md p-4 rounded-xl border border-gray-800 shadow-2xl">
+                  <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest mb-1">Satellite Link</p>
+                  <p className="text-white text-xs font-mono">FIX_STRENGTH: 98%</p>
+               </div>
+            </div>
+          </section>
+        )}
+      </div>
+
+      {/* Sidebar: Incident Logs */}
+      <div className="space-y-6">
+        <div className="flex items-center justify-between px-2">
+          <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 flex items-center gap-2">
+             <Activity size={12} className="text-red-500" /> My Reports
+          </h4>
+        </div>
+        
+        <div className="space-y-4 max-h-[80vh] overflow-y-auto pr-2 custom-scrollbar">
+          {incidents.length === 0 ? (
+            <div className="text-center py-12 bg-black/20 rounded-xl border border-dashed border-gray-800">
+               <p className="text-[10px] text-gray-600 uppercase font-mono">No active logs</p>
+            </div>
+          ) : incidents.map((incident) => (
+            <div 
+              key={incident.id} 
+              onClick={() => setSelectedIncident(incident)}
+              className={cn(
+                "bg-[#0F1115] p-5 rounded-xl border transition-all cursor-pointer group relative overflow-hidden",
+                selectedIncident?.id === incident.id ? "border-red-500 shadow-[0_0_15px_rgba(220,38,38,0.2)]" : "border-gray-800 hover:border-gray-700"
+              )}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <span className={cn(
+                  "text-[9px] font-black uppercase tracking-widest",
+                  incident.status === 'resolved' ? "text-green-500" : "text-orange-500"
+                )}>{incident.type}</span>
+                <span className="text-[8px] font-mono text-gray-700">{new Date(incident.createdAt?.seconds * 1000).toLocaleTimeString()}</span>
               </div>
+              <p className="text-xs text-gray-400 mb-4 line-clamp-2 italic">"{incident.description}"</p>
+              <StatusBadge status={incident.status} />
             </div>
           ))}
         </div>
-      </div>
-
-      {/* Sidebar: AI Safety Guidance & Tracking */}
-      <div className="space-y-6">
-        <section className="bg-gradient-to-br from-red-600 to-red-900 p-8 rounded-2xl text-white shadow-2xl relative overflow-hidden">
-          <div className="relative z-10">
-            <h3 className="font-black text-2xl uppercase tracking-tighter mb-1">Rescue Lock</h3>
-            <p className="text-red-200 text-xs font-mono mb-8 opacity-80">BIOMETRIC_DATA_SYNC_ACTIVE</p>
-            
-            <div className="space-y-4">
-              <div className="bg-black/20 p-5 rounded-xl border border-white/10 backdrop-blur-sm">
-                <div className="text-[10px] font-bold text-red-200 uppercase mb-3 tracking-widest">Neural Status</div>
-                <div className="flex items-center gap-3">
-                   <div className="w-2 h-2 bg-green-400 rounded-full shadow-[0_0_10px_#4ade80]"></div>
-                   <span className="text-xs font-mono text-white">READY_FOR_DEPLOYMENT</span>
-                </div>
-              </div>
-              
-              <div className="p-4 border border-white/5 rounded-xl bg-white/5">
-                 <p className="text-[10px] leading-relaxed text-red-100 italic opacity-70">
-                   "Calm breathing recommended. System has optimized response routes to your precise GPS signature."
-                 </p>
-              </div>
-            </div>
-          </div>
-          <div className="absolute -bottom-10 -right-10 opacity-10 rotate-12 scale-150">
-             <ShieldAlert size={200} />
-          </div>
-        </section>
-
-        <section className="bg-[#0F1115] border border-gray-800 p-6 rounded-2xl">
-           <h5 className="text-[10px] font-bold text-gray-500 uppercase mb-4 tracking-widest">Environmental Intel</h5>
-           <div className="space-y-3">
-              <div className="h-1 bg-gray-800 rounded-full overflow-hidden">
-                 <div className="h-full bg-red-600 w-3/4 animate-pulse"></div>
-              </div>
-              <p className="text-[10px] font-mono text-gray-600 uppercase">Regional_Urgency: High</p>
-           </div>
-        </section>
       </div>
     </div>
   );
 }
 
+function MapUpdater({ center }: { center: [number, number] }) {
+  const map = useMap();
+  useEffect(() => {
+    map.setView(center);
+  }, [center, map]);
+  return null;
+}
+
 function StatusBadge({ status }: { status: string }) {
   const configs: any = {
-    reported: { bg: 'bg-yellow-900/20', border: 'border-yellow-900/50', text: 'text-yellow-500', label: 'Signal Received', icon: <Clock size={10} /> },
-    allocating: { bg: 'bg-blue-900/20', border: 'border-blue-900/50', text: 'text-blue-400', label: 'AI Mapping', icon: <Navigation size={10} className="animate-pulse" /> },
-    in_progress: { bg: 'bg-red-900/20', border: 'border-red-900/50', text: 'text-red-500', label: 'In Transit', icon: <Truck size={10} /> },
-    resolved: { bg: 'bg-green-900/20', border: 'border-green-900/50', text: 'text-green-500', label: 'Secured', icon: <CheckCircle2 size={10} /> }
+    reported: { bg: 'bg-yellow-900/20', border: 'border-yellow-900/50', text: 'text-yellow-500', label: 'Pending Response', icon: <Clock size={10} /> },
+    allocating: { bg: 'bg-blue-900/20', border: 'border-blue-900/50', text: 'text-blue-400', label: 'AI Processing', icon: <Navigation size={10} className="animate-pulse" /> },
+    assigned: { bg: 'bg-purple-900/20', border: 'border-purple-900/50', text: 'text-purple-400', label: 'Accepted', icon: <CheckCircle2 size={10} /> },
+    on_the_way: { bg: 'bg-orange-900/20', border: 'border-orange-900/50', text: 'text-orange-500', label: 'On The Way', icon: <Truck size={10} className="animate-bounce" /> },
+    reached: { bg: 'bg-blue-600/20', border: 'border-blue-500/50', text: 'text-blue-400', label: 'Reached Location', icon: <MapPin size={10} /> },
+    resolved: { bg: 'bg-green-900/20', border: 'border-green-900/50', text: 'text-green-500', label: 'Task Secured', icon: <CheckCircle2 size={10} /> }
   };
   const config = configs[status] || configs.reported;
   return (
-    <div className={cn("flex items-center gap-2 px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border", config.bg, config.text, config.border)}>
+    <div className={cn("flex items-center gap-2 px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border w-fit", config.bg, config.text, config.border)}>
       {config.icon}
       {config.label}
     </div>

@@ -1,15 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, onSnapshot, orderBy, updateDoc, doc, serverTimestamp, getDocs, where } from 'firebase/firestore';
+import { collection, query, onSnapshot, orderBy, updateDoc, doc, serverTimestamp, getDocs, where, deleteDoc } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
-import { ShieldAlert, Activity, Users, Map as MapIcon, Siren, TrendingUp, Target, Truck } from 'lucide-react';
+import { ShieldAlert, Activity, Users, Map as MapIcon, Siren, TrendingUp, Target, Truck, Clock, Navigation, CheckCircle2, MapPin, AlertTriangle, AlertCircle } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { Incident, UserProfile } from '../../types';
 import { handleFirestoreError, OperationType } from '../../lib/errorHandlers';
 
-// Custom Marker Icons based on Urgency
+// Custom icons
 const createUrgencyIcon = (urgency: string) => {
   const color = 
     urgency === 'critical' ? '#dc2626' : 
@@ -21,6 +21,28 @@ const createUrgencyIcon = (urgency: string) => {
     html: `<div style="background-color: ${color}; width: 14px; height: 14px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 10px ${color}"></div>`,
     iconSize: [14, 14],
     iconAnchor: [7, 7]
+  });
+};
+
+const vehicleIcon = (type: string) => {
+  let icon = '🚑';
+  let color = '#22c55e';
+  
+  if (type === 'fire') {
+    icon = '🔥';
+    color = '#f97316';
+  } else if (type === 'volunteer' || type === 'other') {
+    icon = '🤝';
+    color = '#3b82f6';
+  }
+
+  return L.divIcon({
+    className: 'custom-div-icon',
+    html: `<div style="background-color: ${color}; width: 20px; height: 20px; border-radius: 4px; display: flex; align-items: center; justify-content: center; border: 1px solid white; box-shadow: 0 0 10px rgba(0,0,0,0.5); font-size: 10px; color: white;">
+      ${icon}
+    </div>`,
+    iconSize: [20, 20],
+    iconAnchor: [10, 10]
   });
 };
 
@@ -37,10 +59,12 @@ function MapRefocuser({ incidents }: { incidents: Incident[] }) {
 
 export default function ResponderPanel() {
   const [incidents, setIncidents] = useState<Incident[]>([]);
+  const [volunteers, setVolunteers] = useState<UserProfile[]>([]);
   const [stats, setStats] = useState({
     active: 0,
     critical: 0,
-    resolved: 0
+    resolved: 0,
+    unhandled: 0
   });
 
   useEffect(() => {
@@ -51,8 +75,9 @@ export default function ResponderPanel() {
 
       setStats({
         active: data.filter(i => i.status !== 'resolved').length,
-        critical: data.filter(i => i.urgency === 'critical').length,
-        resolved: data.filter(i => i.status === 'resolved').length
+        critical: data.filter(i => i.urgency === 'critical' && i.status !== 'resolved').length,
+        resolved: data.filter(i => i.status === 'resolved').length,
+        unhandled: data.filter(i => i.status === 'reported').length
       });
     }, (error) => {
       handleFirestoreError(error, OperationType.GET, 'incidents');
@@ -61,194 +86,143 @@ export default function ResponderPanel() {
     return () => unsubscribe();
   }, []);
 
-  // Helper to calculate distance (Haversine formula simplified)
-  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
-    if (lat1 === undefined || lon1 === undefined || lat2 === undefined || lon2 === undefined) return Infinity;
-    const R = 6371; // km
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-              Math.sin(dLon / 2) * Math.sin(dLon / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c;
+  useEffect(() => {
+    const q = query(collection(db, 'users'), where('role', '==', 'volunteer'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs.map(doc => doc.data() as UserProfile);
+      setVolunteers(data);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleUpdate = async (id: string, updates: Partial<Incident>) => {
+    try {
+      await updateDoc(doc(db, 'incidents', id), {
+        ...updates,
+        updatedAt: serverTimestamp()
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `incidents/${id}`);
+    }
   };
 
-  // Automated System Tasks: Escalation and Assignment
-  useEffect(() => {
-    const automationInterval = setInterval(async () => {
-      const now = Date.now();
-      const ESCALATION_LIMIT = 15 * 60 * 1000;
-      const ASSIGNMENT_LIMIT = 5 * 60 * 1000;
-
-      // Fetch available volunteers
-      const volunteerQuery = query(collection(db, 'users'), where('role', '==', 'volunteer'));
-      let volunteers: UserProfile[] = [];
+  const handleDelete = async (id: string) => {
+    if (window.confirm("Permanently delete this incident record?")) {
       try {
-        const vSnapshot = await getDocs(volunteerQuery);
-        volunteers = vSnapshot.docs.map(doc => doc.data() as UserProfile).filter(v => v.currentLocation);
+        await deleteDoc(doc(db, 'incidents', id));
       } catch (err) {
-        handleFirestoreError(err, OperationType.LIST, 'users');
+        handleFirestoreError(err, OperationType.DELETE, `incidents/${id}`);
       }
-
-      for (const incident of incidents) {
-        if (!incident.createdAt?.seconds) continue;
-        const creationMs = incident.createdAt.seconds * 1000;
-        const elapsed = now - creationMs;
-
-        // 1. Auto-Escalation (15 mins)
-        if (
-          (incident.status === 'reported' || incident.status === 'allocating') &&
-          incident.urgency !== 'critical' &&
-          elapsed > ESCALATION_LIMIT
-        ) {
-          try {
-            await updateDoc(doc(db, 'incidents', incident.id), {
-              urgency: 'critical',
-              aiPrioritization: 'RE-ASSIGNED_OVERRIDE',
-              escalatedAt: serverTimestamp()
-            });
-          } catch (err) {
-            handleFirestoreError(err, OperationType.UPDATE, `incidents/${incident.id}`);
-          }
-        }
-
-        // 2. Auto-Assignment (5 mins)
-        if (
-          (incident.status === 'reported' || incident.status === 'allocating') &&
-          !incident.assignedVolunteerId &&
-          elapsed > ASSIGNMENT_LIMIT
-        ) {
-          let closestVolunteer: UserProfile | null = null;
-          let minDistance = Infinity;
-
-          volunteers.forEach(v => {
-            if (v.currentLocation && typeof incident.location?.lat === 'number' && typeof incident.location?.lng === 'number') {
-              const dist = calculateDistance(
-                incident.location.lat, 
-                incident.location.lng, 
-                v.currentLocation.lat, 
-                v.currentLocation.lng
-              );
-              if (dist < minDistance) {
-                minDistance = dist;
-                closestVolunteer = v;
-              }
-            }
-          });
-
-          if (closestVolunteer) {
-            try {
-              await updateDoc(doc(db, 'incidents', incident.id), {
-                assignedVolunteerId: (closestVolunteer as UserProfile).uid,
-                status: 'allocating',
-                autoAssignedAt: serverTimestamp(),
-                aiPrioritization: `AUTO_ROUTED_CLOSEST_${minDistance?.toFixed(1) || '0'}KM`
-              });
-            } catch (err) {
-              handleFirestoreError(err, OperationType.UPDATE, `incidents/${incident.id}`);
-            }
-          }
-        }
-      }
-    }, 60000);
-
-    return () => clearInterval(automationInterval);
-  }, [incidents]);
+    }
+  };
 
   return (
     <div className="space-y-8 h-full animate-in fade-in duration-700">
       {/* Stats Strip */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 px-4">
         <StatCard 
           icon={<ShieldAlert className="text-red-500" />} 
-          label="Active Emergencies" 
-          value={stats.active} 
-          trend="+2 in 1hr" 
-        />
-        <StatCard 
-          icon={<Siren className="text-orange-500" />} 
-          label="High Priority" 
+          label="Critical Active" 
           value={stats.critical} 
-          isAlert 
+          isAlert={stats.critical > 0}
         />
         <StatCard 
-          icon={<Activity className="text-blue-500" />} 
-          label="System Status" 
-          value="Online" 
-          trend="ACTIVE" 
+          icon={<AlertCircle className="text-yellow-500" />} 
+          label="Unhandled Alerts" 
+          value={stats.unhandled} 
+          isAlert={stats.unhandled > 3}
+          trend="ACTION REQ"
         />
         <StatCard 
-          icon={<TrendingUp className="text-green-500" />} 
-          label="Resolved Cases" 
+          icon={<Users className="text-blue-500" />} 
+          label="Available Units" 
+          value={volunteers.length} 
+        />
+        <StatCard 
+          icon={<CheckCircle2 className="text-green-500" />} 
+          label="Resolved Today" 
           value={stats.resolved} 
         />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-        {/* Incident List */}
-        <div className="lg:col-span-1 space-y-4 max-h-[700px] overflow-y-auto pr-2 custom-scrollbar">
-          <div className="flex items-center justify-between sticky top-0 bg-[#0A0B0D] py-4 z-10">
-            <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500">
-               Live Reports
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 px-4">
+        {/* Incident Monitoring List */}
+        <div className="lg:col-span-1 space-y-4 max-h-[800px] overflow-y-auto pr-2 custom-scrollbar">
+          <div className="flex items-center justify-between sticky top-0 bg-[#0A0B0D] py-4 z-10 border-b border-gray-800">
+            <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 flex items-center gap-2">
+               <Siren size={12} className="text-red-500" /> Command Ops
             </h3>
-            <div className="flex items-center gap-2">
-               <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse"></span>
-               <span className="text-[9px] font-mono text-gray-600 uppercase">Updating</span>
-            </div>
+            <span className="text-[9px] font-mono text-gray-700">{incidents.length} ENTRIES</span>
           </div>
           
           {incidents.map((incident) => (
             <div key={incident.id} className={cn(
-              "p-5 rounded-xl bg-[#0F1115] border border-gray-800 hover:border-red-500/50 transition-all cursor-pointer group",
-              incident.urgency === 'critical' && "border-red-900 ring-1 ring-red-900/50 bg-red-950/10"
+              "p-5 rounded-xl bg-[#0F1115] border border-gray-800 hover:border-gray-700 transition-all group",
+              incident.urgency === 'critical' && incident.status !== 'resolved' && "ring-1 ring-red-500/50 bg-red-950/10",
+              incident.status === 'reported' && "border-yellow-500/30"
             )}>
               <div className="flex justify-between items-center mb-4">
-                 <span className={cn(
-                   "text-[9px] px-2 py-0.5 rounded font-black uppercase tracking-widest",
-                   incident.urgency === 'critical' ? 'bg-red-500 text-white' :
-                   incident.urgency === 'high' ? 'bg-orange-500/20 text-orange-400' : 'bg-blue-500/20 text-blue-400'
-                 )}>
-                   {incident.urgency}
-                 </span>
-                 <span className="text-[9px] text-gray-700 font-mono text-[8px] opacity-40">ID: {incident.id.slice(0, 6)}</span>
+                 <div className="flex items-center gap-2">
+                   <span className={cn(
+                     "text-[9px] px-2 py-0.5 rounded font-black uppercase tracking-widest",
+                     incident.urgency === 'critical' ? 'bg-red-600 text-white shadow-[0_0_10px_rgba(220,38,38,0.5)]' :
+                     incident.urgency === 'high' ? 'bg-orange-500/20 text-orange-400' : 'bg-blue-500/20 text-blue-400'
+                   )}>
+                     {incident.urgency}
+                   </span>
+                   {incident.status === 'reported' && (Date.now() - (incident.createdAt?.seconds * 1000 || 0)) > 120000 && (
+                     <AlertTriangle size={12} className="text-yellow-500 animate-bounce" />
+                   )}
+                 </div>
+                 <StatusBadge status={incident.status} />
               </div>
-              <p className="text-[11px] font-bold text-white mb-2 uppercase tracking-tight group-hover:text-red-400 transition-colors truncate">{incident.type.replace(/_/g, ' ')}</p>
-              <p className="text-[10px] text-gray-400 line-clamp-2 mb-6 leading-relaxed italic opacity-80">"{incident.description}"</p>
-              <div className="flex items-center justify-between pt-4 border-t border-gray-800/50">
-                 <div className="text-[9px] font-black text-red-500 uppercase tracking-widest">{incident.status}</div>
-                 <div className="text-[9px] font-mono text-gray-700">{new Date(incident.createdAt?.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit'})}</div>
+              <h4 className="text-[12px] font-bold text-white mb-2 uppercase tracking-tight">{incident.location.address || "Unknown Point"}</h4>
+              <p className="text-[10px] text-gray-500 mb-6 leading-relaxed italic line-clamp-2">"{incident.description}"</p>
+              
+              <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                 <button 
+                  onClick={() => handleUpdate(incident.id, { status: 'resolved' })}
+                  className="flex-1 py-2 bg-green-900/20 text-green-500 border border-green-900/50 rounded-lg text-[8px] font-black uppercase hover:bg-green-600 hover:text-white transition-all"
+                 >
+                   Resolve
+                 </button>
+                 {incident.status === 'reported' && (
+                   <button 
+                    onClick={() => handleUpdate(incident.id, { urgency: 'critical', status: 'allocating' })}
+                    className="flex-1 py-2 bg-red-900/20 text-red-500 border border-red-900/50 rounded-lg text-[8px] font-black uppercase hover:bg-red-600 hover:text-white transition-all"
+                   >
+                     Force Allocate
+                   </button>
+                 )}
               </div>
             </div>
           ))}
         </div>
 
-        {/* Global Overview Map */}
-        <div className="lg:col-span-3 bg-[#0F1115] rounded-2xl p-6 shadow-2xl border border-gray-800 flex flex-col min-h-[600px] relative">
+        {/* Tactical Map */}
+        <div className="lg:col-span-3 bg-[#0F1115] rounded-2xl p-6 shadow-2xl border border-gray-800 flex flex-col h-[800px] relative">
           <div className="flex items-center justify-between mb-6">
              <div className="flex items-center gap-3">
                 <div className="bg-red-600/10 p-2 rounded-lg border border-red-500/20">
-                   <MapIcon className="text-red-500" size={18} />
+                   <Target className="text-red-500" size={18} />
                 </div>
-                <h3 className="font-black text-white uppercase tracking-widest text-sm">Emergency Map</h3>
-             </div>
-             <div className="flex items-center gap-6 text-[9px] font-black text-gray-600 uppercase tracking-[0.2em]">
-                <div className="flex items-center gap-2"><span className="w-2 h-2 bg-red-600 rounded-full shadow-[0_0_8px_red]"></span> High Risk</div>
-                <div className="flex items-center gap-2"><span className="w-2 h-2 bg-orange-600 rounded-full"></span> Elevated</div>
-                <div className="flex items-center gap-2"><span className="w-2 h-2 bg-blue-600 rounded-full"></span> Safe Area</div>
+                <div>
+                  <h3 className="font-black text-white uppercase tracking-widest text-xs">Tactical Response Overlay</h3>
+                  <p className="text-[8px] text-gray-600 font-mono mt-0.5 uppercase tracking-widest">Global Coordination Matrix</p>
+                </div>
              </div>
           </div>
           
-          <div className="flex-1 rounded-xl overflow-hidden border border-gray-800 relative group/map">
+          <div className="flex-1 rounded-xl overflow-hidden border border-gray-800 relative shadow-inner">
              <MapContainer 
               center={[12.9716, 77.5946]} 
-              zoom={12} 
+              zoom={13} 
               style={{ height: '100%', width: '100%' }}
-              scrollWheelZoom={true}
+              className="h-full w-full"
              >
                 <TileLayer
-                  url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
                 />
                 <MapRefocuser incidents={incidents} />
                 {incidents.map((incident) => {
@@ -260,47 +234,52 @@ export default function ResponderPanel() {
                         icon={createUrgencyIcon(incident.urgency)}
                       >
                         <Popup className="dark-popup">
-                          <div className="font-mono text-[10px] p-2 text-white bg-[#0F1115] border border-gray-800 rounded-lg shadow-2xl">
-                            <p className="font-black text-red-500 mb-2 uppercase tracking-widest border-b border-gray-800 pb-1">{incident.type}</p>
-                            <p className="text-gray-400 italic mb-3">"{incident.description}"</p>
-                            <div className="flex items-center justify-between text-[8px] font-mono text-gray-600 border-t border-gray-800 pt-2">
-                               <span>FIX: {incident.location.lat.toFixed(4)}, {incident.location.lng.toFixed(4)}</span>
-                               <span className="text-red-500 font-bold uppercase tracking-tighter">{incident.status}</span>
+                          <div className="font-mono text-[10px] p-2 text-white bg-[#0F1115] border border-gray-800 rounded-lg shadow-2xl min-w-[200px]">
+                            <div className="flex justify-between items-center mb-2 border-b border-gray-800 pb-2">
+                               <span className="font-black text-red-500 uppercase tracking-widest">{incident.type}</span>
+                               <span className="text-[8px] text-gray-600">#{incident.id.slice(0,6)}</span>
+                            </div>
+                            <p className="text-gray-300 font-bold mb-1">{incident.location.address}</p>
+                            {incident.location.doorInfo && (
+                               <p className="text-blue-500 font-black text-[9px] uppercase mb-2">Unit: {incident.location.doorInfo}</p>
+                            )}
+                            <p className="text-gray-500 italic mb-4">"{incident.description}"</p>
+                            
+                            <div className="grid grid-cols-2 gap-2 mt-2">
+                               <button 
+                                 onClick={() => handleUpdate(incident.id, { status: 'resolved' })}
+                                 className="py-2 bg-green-600 text-white rounded text-[8px] font-black uppercase hover:bg-green-700"
+                               >
+                                 Resolve
+                               </button>
+                               <button 
+                                 onClick={() => handleDelete(incident.id)}
+                                 className="py-2 bg-gray-800 text-gray-400 rounded text-[8px] font-black uppercase hover:bg-red-600 hover:text-white"
+                               >
+                                 Delete
+                               </button>
                             </div>
                           </div>
                         </Popup>
                       </Marker>
-                      {incident.urgency === 'critical' && (
-                        <Circle 
-                          center={[incident.location.lat, incident.location.lng]}
-                          radius={1000}
-                          pathOptions={{ color: '#dc2626', fillColor: '#dc2626', fillOpacity: 0.1, weight: 1, dashArray: '5, 10' }}
-                        />
+                      
+                      {incident.responderLocation && (
+                        <Marker 
+                          position={[incident.responderLocation.lat, incident.responderLocation.lng]} 
+                          icon={vehicleIcon(incident.responderType || 'fire')}
+                        >
+                          <Popup className="dark-popup">
+                            <div className="p-2 text-white bg-black/60 rounded">
+                               <p className="text-[10px] font-black uppercase mb-1">Unit {incident.responderType}</p>
+                               <StatusBadge status={incident.status} />
+                            </div>
+                          </Popup>
+                        </Marker>
                       )}
                     </React.Fragment>
                   );
                 })}
              </MapContainer>
-
-             {/* Map Controls */}
-             <div className="absolute top-4 right-4 z-[1000] flex flex-col gap-2">
-                <button className="bg-black/60 backdrop-blur-md p-2 rounded border border-gray-800 text-gray-400 hover:text-white transition-colors" title="Lock GPS On Target">
-                   <Target size={18} />
-                </button>
-             </div>
-          </div>
-
-
-          {/* Map Overlay Stats */}
-          <div className="absolute bottom-10 left-10 z-[1000] flex gap-4 pointer-events-none">
-             <div className="bg-black/80 backdrop-blur-md border border-gray-800 p-4 rounded-lg">
-                <div className="text-[9px] font-bold text-gray-500 uppercase mb-2">Saturation Level</div>
-                <div className="flex items-end gap-1 h-8">
-                   {[40, 70, 50, 90, 60, 80].map((h, i) => (
-                      <div key={i} className="w-1.5 bg-red-600/50 rounded-t" style={{ height: `${h}%` }}></div>
-                   ))}
-                </div>
-             </div>
           </div>
         </div>
       </div>
@@ -308,20 +287,38 @@ export default function ResponderPanel() {
   );
 }
 
+function StatusBadge({ status }: { status: string }) {
+  const configs: any = {
+    reported: { bg: 'bg-yellow-900/20', border: 'border-yellow-900/50', text: 'text-yellow-500', label: 'Reported', icon: <Clock size={10} /> },
+    allocating: { bg: 'bg-blue-900/20', border: 'border-blue-900/50', text: 'text-blue-400', label: 'Allocating', icon: <Navigation size={10} className="animate-pulse" /> },
+    assigned: { bg: 'bg-purple-900/20', border: 'border-purple-900/50', text: 'text-purple-400', label: 'Assigned', icon: <CheckCircle2 size={10} /> },
+    on_the_way: { bg: 'bg-orange-900/20', border: 'border-orange-900/50', text: 'text-orange-500', label: 'On Way', icon: <Truck size={10} className="animate-bounce" /> },
+    reached: { bg: 'bg-blue-600/20', border: 'border-blue-500/50', text: 'text-blue-400', label: 'Reached', icon: <MapPin size={10} /> },
+    resolved: { bg: 'bg-green-900/20', border: 'border-green-900/50', text: 'text-green-500', label: 'Resolved', icon: <CheckCircle2 size={10} /> }
+  };
+  const config = configs[status] || configs.reported;
+  return (
+    <div className={cn("flex items-center gap-2 px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest border w-fit", config.bg, config.text, config.border)}>
+      {config.icon}
+      {config.label}
+    </div>
+  );
+}
+
 function StatCard({ icon, label, value, trend, isAlert }: any) {
   return (
     <div className={cn(
-      "bg-[#0F1115] p-6 rounded-2xl shadow-xl border border-gray-800 flex flex-col justify-between group transition-all duration-300 hover:border-red-500/30",
+      "bg-[#0F1115] p-6 rounded-2xl border border-gray-800 flex flex-col justify-between group transition-all duration-300",
       isAlert && "border-red-900/50 bg-red-950/5 ring-1 ring-red-900/20"
     )}>
-      <div className="flex items-center justify-between mb-8">
-        <div className="p-2 transition-transform group-hover:scale-125 duration-500">
+      <div className="flex items-center justify-between mb-6">
+        <div className={cn("p-2 rounded-lg bg-black/40 border border-gray-800 transition-transform group-hover:scale-110", isAlert && "border-red-900/50 bg-red-900/20 shadow-[0_0_10px_rgba(220,38,38,0.2)]")}>
           {icon}
         </div>
-        {trend && <span className="text-[9px] font-black text-gray-600 uppercase tracking-widest">{trend}</span>}
+        {trend && <span className={cn("text-[8px] font-black uppercase tracking-widest", isAlert ? "text-red-500" : "text-gray-600")}>{trend}</span>}
       </div>
       <div>
-        <div className="text-4xl font-black text-white leading-none mb-2 tabular-nums tracking-tighter">{value}</div>
+        <div className="text-3xl font-black text-white leading-none mb-1 tabular-nums tracking-tighter">{value}</div>
         <div className="text-[9px] font-black uppercase tracking-[0.2em] text-gray-600">{label}</div>
       </div>
     </div>

@@ -49,7 +49,7 @@ service cloud.firestore {
     function isValidUser(data) {
       return data.keys().hasAll(['email', 'role', 'createdAt']) &&
              data.email is string && data.email.size() <= 256 &&
-             data.role in ['user', 'volunteer', 'admin'] &&
+             data.role in ['user', 'volunteer', 'admin', 'fire_station', 'ambulance'] &&
              (!('currentLocation' in data) || (data.currentLocation.lat is number && data.currentLocation.lng is number));
     }
 
@@ -58,7 +58,7 @@ service cloud.firestore {
              data.userId == request.auth.uid &&
              data.type is string && data.type.size() <= 100 &&
              data.description is string && data.description.size() <= 2000 &&
-             data.status in ['reported', 'allocating', 'in_progress', 'resolved'] &&
+             data.status in ['reported', 'allocating', 'assigned', 'on_the_way', 'reached', 'resolved'] &&
              (
                (data.location.keys().hasAll(['lat', 'lng']) && data.location.lat is number && data.location.lng is number) ||
                (data.location.keys().hasAll(['address']) && data.location.address is string)
@@ -70,7 +70,7 @@ service cloud.firestore {
       allow read: if isSignedIn();
       allow create: if isOwner(userId) && isValidUser(incoming());
       allow update: if (isOwner(userId) && isValidUser(incoming()) && incoming().role == existing().role) || hasRole('admin');
-      allow list: if hasRole('admin') || hasRole('volunteer');
+      allow list: if hasRole('admin') || hasRole('volunteer') || hasRole('fire_station') || hasRole('ambulance');
     }
 
     match /incidents/{incidentId} {
@@ -78,22 +78,28 @@ service cloud.firestore {
       allow list: if isSignedIn() && (
         resource.data.userId == request.auth.uid || 
         hasRole('volunteer') || 
-        hasRole('admin')
+        hasRole('admin') ||
+        hasRole('fire_station') ||
+        hasRole('ambulance')
       );
       
       allow get: if isSignedIn() && (
         resource.data.userId == request.auth.uid || 
         hasRole('volunteer') || 
-        hasRole('admin')
+        hasRole('admin') ||
+        hasRole('fire_station') ||
+        hasRole('ambulance')
       );
 
       allow create: if isSignedIn() && isValidIncident(incoming()) && incoming().createdAt == request.time;
 
       allow update: if isSignedIn() && (
-        // User can update their own reported incidents (e.g. they can't change much but maybe status to resolved if they fixed it, or just description)
+        // User can update their own reported incidents
         (isOwner(existing().userId) && incoming().userId == existing().userId) ||
-        // Volunteers can update status
+        // Responders can update status and location tracking
         hasRole('volunteer') ||
+        hasRole('fire_station') ||
+        hasRole('ambulance') ||
         // Admins have full update power
         hasRole('admin')
       );

@@ -6,7 +6,14 @@ export async function classifyEmergency(description: string) {
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: `Classify this emergency report based on urgency (low, medium, high, critical) and type (medical, natural_calamity, fire, security, other). 
+      contents: `Classify this emergency report.
+      Urgency levels: low, medium, high, critical.
+      Emergency Types: fire, medical, volunteer (for general help), other.
+      
+      Fire examples: fire, explosion, chemical spill.
+      Medical examples: injury, heart attack, unconscious, bleeding.
+      Volunteer examples: stuck, need food/water, minor assistance.
+      
       Provide the result in JSON format with keys 'urgency', 'type', and a brief 'summary'.
       Report: "${description}"`,
       config: {
