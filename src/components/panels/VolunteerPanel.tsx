@@ -9,32 +9,21 @@ import { handleFirestoreError, OperationType } from '../../lib/errorHandlers';
 export default function VolunteerPanel() {
   const [tasks, setTasks] = useState<Incident[]>([]);
   const [acceptedTask, setAcceptedTask] = useState<Incident | null>(null);
-  const [isAvailable, setIsAvailable] = useState(false);
   const user = auth.currentUser;
 
   useEffect(() => {
     if (!user) return;
+    const q = query(
+      collection(db, 'incidents'),
+      where('status', 'in', ['reported', 'allocating', 'assigned', 'on_the_way', 'reached'])
+    );
 
-    // Sync availability
-    const syncAvailability = async () => {
-      try {
-        await updateDoc(doc(db, 'users', user.uid), { isAvailable });
-      } catch (err) {
-        console.error("Failed to sync availability", err);
-      }
-    };
-    syncAvailability();
-
-    if (!isAvailable) {
-      setTasks([]);
-      return;
-    }
-
-    const q = collection(db, 'incidents');
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Incident));
+      // Show volunteer tasks that are unassigned OR assigned to this volunteer
       const filtered = data.filter(t => 
-        (t.type === 'volunteer' && t.status !== 'resolved')
+        (t.type === 'volunteer' || t.type === 'other' || t.assignedResponderId === user.uid) && 
+        (!t.assignedResponderId || t.assignedResponderId === user.uid)
       );
       setTasks(filtered);
     }, (error) => {
@@ -42,7 +31,7 @@ export default function VolunteerPanel() {
     });
 
     return () => unsubscribe();
-  }, [user, isAvailable]);
+  }, [user]);
 
   const handleAction = async (task: Incident, newStatus: string) => {
     if (!user) return;
@@ -102,20 +91,13 @@ export default function VolunteerPanel() {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 px-4">
         <div>
           <h2 className="text-2xl font-black text-white uppercase tracking-tighter">Volunteer <span className="text-blue-500">Mission Hub</span></h2>
-          <p className="text-[10px] text-gray-500 font-mono tracking-widest uppercase mt-1">Status: {isAvailable ? "Online" : "Off Duty"} // Tasks: {tasks.length}</p>
+          <p className="text-[10px] text-gray-500 font-mono tracking-widest uppercase mt-1">Status: Active // Nearby Service Tasks: {tasks.length}</p>
         </div>
         <div className="flex gap-4">
-           <button 
-             onClick={() => setIsAvailable(!isAvailable)}
-             className={cn(
-               "px-6 py-2 rounded-full font-black text-[10px] uppercase tracking-widest border transition-all",
-               isAvailable 
-                 ? "bg-blue-600/10 border-blue-500 text-blue-500 hover:bg-blue-600/20" 
-                 : "bg-red-600/10 border-red-500 text-red-500 hover:bg-red-600/20"
-             )}
-           >
-             {isAvailable ? "Go Off Duty" : "Go On Duty"}
-           </button>
+           <div className="bg-[#0F1115] px-4 py-2 rounded-lg border border-gray-800 flex items-center gap-3">
+              <div className="w-1.5 h-1.5 bg-green-500 rounded-full shadow-[0_0_8px_#22c55e]"></div>
+              <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">Response Network Online</span>
+           </div>
         </div>
       </div>
 
@@ -156,7 +138,16 @@ export default function VolunteerPanel() {
             </div>
 
             <div className="flex flex-col gap-3">
-              {task.status === 'assigned' && (
+              {(!task.assignedResponderId || task.status === 'reported') && (
+                <button 
+                  onClick={() => handleAction(task, 'assigned')}
+                  className="w-full bg-blue-600 text-white px-6 py-4 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-blue-700 transition-all shadow-lg"
+                >
+                  <Navigation size={14} /> Accept Request
+                </button>
+              )}
+
+              {task.assignedResponderId === user?.uid && task.status === 'assigned' && (
                 <div className="space-y-2">
                   <button 
                     onClick={() => setAcceptedTask(task)}
@@ -172,8 +163,8 @@ export default function VolunteerPanel() {
                   </button>
                 </div>
               )}
-              
-              {task.status === 'on_the_way' && (
+
+              {task.assignedResponderId === user?.uid && task.status === 'on_the_way' && (
                 <button 
                   onClick={() => handleAction(task, 'reached')}
                   className="w-full bg-orange-600 text-white py-4 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-orange-700 transition-all"
@@ -182,7 +173,7 @@ export default function VolunteerPanel() {
                 </button>
               )}
 
-              {task.status === 'reached' && (
+              {task.assignedResponderId === user?.uid && task.status === 'reached' && (
                 <button 
                   onClick={() => handleAction(task, 'resolved')}
                   className="w-full bg-green-600 text-white py-4 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-green-700 transition-all"

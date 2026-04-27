@@ -8,33 +8,23 @@ import { cn } from '../../lib/utils';
 
 export default function FireDashboard() {
   const [incidents, setIncidents] = useState<Incident[]>([]);
-  const [isAvailable, setIsAvailable] = useState(false);
   const user = auth.currentUser;
 
   useEffect(() => {
     if (!user) return;
 
-    // Sync availability
-    const syncAvailability = async () => {
-      try {
-        await updateDoc(doc(db, 'users', user.uid), { isAvailable });
-      } catch (err) {
-        console.error("Failed to sync availability", err);
-      }
-    };
-    syncAvailability();
+    // Listen for incidents that are 'fire' type or assigned to this responder
+    const q = query(
+      collection(db, 'incidents'),
+      where('status', 'in', ['reported', 'allocating', 'assigned', 'on_the_way', 'reached'])
+    );
 
-    if (!isAvailable) {
-      setIncidents([]);
-      return;
-    }
-
-    // Listen for fire incidents
-    const q = collection(db, 'incidents');
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Incident));
+      // Filter for fire-related or already assigned to this station
       const filtered = data.filter(i => 
-        (i.type === 'fire' && i.status !== 'resolved')
+        i.type === 'fire' || 
+        i.assignedResponderId === user.uid
       );
       setIncidents(filtered.sort((a, b) => b.createdAt?.seconds - a.createdAt?.seconds));
     }, (err) => {
@@ -42,7 +32,7 @@ export default function FireDashboard() {
     });
 
     return () => unsubscribe();
-  }, [user, isAvailable]);
+  }, [user]);
 
   const handleUpdateStatus = async (incidentId: string, status: Incident['status']) => {
     try {
@@ -99,19 +89,8 @@ export default function FireDashboard() {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 px-4">
         <div>
           <h2 className="text-2xl font-black text-white uppercase tracking-tighter">Fire Dept <span className="text-orange-500">Dispatch</span></h2>
-          <p className="text-[10px] text-gray-500 font-mono tracking-widest uppercase mt-1">Station Status: {isAvailable ? "Online" : "Off Duty"}</p>
+          <p className="text-[10px] text-gray-500 font-mono tracking-widest uppercase mt-1">Station: Active // Monitoring for Alerts</p>
         </div>
-        <button 
-          onClick={() => setIsAvailable(!isAvailable)}
-          className={cn(
-            "px-6 py-2 rounded-full font-black text-[10px] uppercase tracking-widest border transition-all",
-            isAvailable 
-              ? "bg-orange-600/10 border-orange-500 text-orange-500 hover:bg-orange-600/20" 
-              : "bg-red-600/10 border-red-500 text-red-500 hover:bg-red-600/20"
-          )}
-        >
-          {isAvailable ? "Set Off Duty" : "Go On Duty"}
-        </button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 px-4">
@@ -150,6 +129,14 @@ export default function FireDashboard() {
                 </div>
 
                 <div className="grid grid-cols-1 gap-2">
+                  {incident.status === 'reported' && (
+                    <button 
+                      onClick={() => handleUpdateStatus(incident.id, 'assigned')}
+                      className="w-full bg-orange-600 hover:bg-orange-700 text-white py-3 rounded-lg font-black text-[10px] uppercase tracking-widest transition-all"
+                    >
+                      Accept Call / Dispatch Truck
+                    </button>
+                  )}
                   {incident.status === 'assigned' && (
                     <button 
                       onClick={() => handleUpdateStatus(incident.id, 'on_the_way')}

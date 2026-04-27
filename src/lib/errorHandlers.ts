@@ -1,6 +1,30 @@
 import { auth } from '../services/firebase';
-export { OperationType } from '../types';
-import { OperationType, FirestoreErrorInfo } from '../types';
+
+export enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+export interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
+    }[];
+  }
+}
 
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
   const errInfo: FirestoreErrorInfo = {
@@ -20,9 +44,7 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     path
   }
   console.error('Firestore Error: ', JSON.stringify(errInfo));
-  
-  // We only throw if it's a permission error that MUST be handled by the caller or if explicitly requested.
-  // Otherwise we just return the error info for logging/display.
+  // If it's a permission error, we throw it so it can be fixed or handled by UI
   if (errInfo.error.includes('insufficient permissions') || errInfo.error.includes('permission-denied')) {
      throw new Error(JSON.stringify(errInfo));
   }

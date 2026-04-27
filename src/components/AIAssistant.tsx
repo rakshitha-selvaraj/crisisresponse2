@@ -48,9 +48,9 @@ export default function AIAssistant() {
                  <Bot size={24} />
               </div>
               <div>
-                <h4 className="font-black text-[11px] tracking-[0.2em] uppercase">Gemini Assistant</h4>
+                <h4 className="font-black text-[11px] tracking-[0.2em] uppercase">Gemma Assistant</h4>
                 <div className="flex items-center gap-2 mt-1">
-                   <div className="w-1.5 h-1.5 bg-blue-500 rounded-full shadow-[0_0_8px_#3b82f6]"></div>
+                   <div className="w-1.5 h-1.5 bg-green-500 rounded-full shadow-[0_0_8px_#22c55e]"></div>
                    <span className="text-[8px] font-mono text-gray-500 uppercase tracking-widest leading-none">Logic_Stable</span>
                 </div>
               </div>
@@ -77,7 +77,7 @@ export default function AIAssistant() {
                     ? "bg-red-600 text-white rounded-tr-none shadow-xl shadow-red-900/10" 
                     : "bg-gray-900 text-gray-300 border border-gray-800 rounded-tl-none shadow-sm"
                 )}>
-                  {m.role === 'ai' && <span className="text-blue-500 mr-2 font-black tracking-tighter">[GEMINI_CORE]:</span>}
+                  {m.role === 'ai' && <span className="text-red-500 mr-2 font-black tracking-tighter">[GEMMA_CORE]:</span>}
                   {m.text}
                 </div>
               </div>

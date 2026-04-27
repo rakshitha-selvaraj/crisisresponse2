@@ -59,13 +59,38 @@ function MapRefocuser({ incidents }: { incidents: Incident[] }) {
 
 export default function ResponderPanel() {
   const [incidents, setIncidents] = useState<Incident[]>([]);
-  const [activeResponders, setActiveResponders] = useState<UserProfile[]>([]);
+  const [volunteers, setVolunteers] = useState<UserProfile[]>([]);
   const [stats, setStats] = useState({
-    total: 0,
+    active: 0,
     critical: 0,
     resolved: 0,
-    pending: 0
+    unhandled: 0
   });
+
+  // Auto-Reassignment Logic
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const now = Date.now();
+      incidents.forEach(async (incident) => {
+        const createdAt = incident.createdAt?.seconds * 1000 || now;
+        // If unhandled for > 60 seconds
+        if (incident.status === 'reported' && (now - createdAt) > 60000 && !incident.isReassigned) {
+          console.log(`Auto-reassigning incident ${incident.id} due to delay`);
+          try {
+            await updateDoc(doc(db, 'incidents', incident.id), {
+              isReassigned: true,
+              urgency: 'critical',
+              reassignedAt: serverTimestamp(),
+              systemNote: "Auto-reassigned due to station delay"
+            });
+          } catch (e) {
+            console.error("Reassignment failed", e);
+          }
+        }
+      });
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [incidents]);
 
   useEffect(() => {
     const q = query(collection(db, 'incidents'), orderBy('createdAt', 'desc'));
@@ -74,10 +99,10 @@ export default function ResponderPanel() {
       setIncidents(data);
 
       setStats({
-        total: data.length,
+        active: data.filter(i => i.status !== 'resolved').length,
         critical: data.filter(i => i.urgency === 'critical' && i.status !== 'resolved').length,
         resolved: data.filter(i => i.status === 'resolved').length,
-        pending: data.filter(i => i.status !== 'resolved' && (Date.now() - (i.createdAt?.seconds * 1000 || Date.now())) > 120000).length
+        unhandled: data.filter(i => i.status === 'reported').length
       });
     }, (error) => {
       handleFirestoreError(error, OperationType.GET, 'incidents');
@@ -87,10 +112,10 @@ export default function ResponderPanel() {
   }, []);
 
   useEffect(() => {
-    const q = query(collection(db, 'users'), where('isAvailable', '==', true));
+    const q = query(collection(db, 'users'), where('role', '==', 'volunteer'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map(doc => doc.data() as UserProfile);
-      setActiveResponders(data);
+      setVolunteers(data);
     });
     return () => unsubscribe();
   }, []);
@@ -121,26 +146,27 @@ export default function ResponderPanel() {
       {/* Stats Strip */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 px-4">
         <StatCard 
-          icon={<Activity className="text-blue-500" />} 
-          label="Total Reports" 
-          value={stats.total} 
-        />
-        <StatCard 
           icon={<ShieldAlert className="text-red-500" />} 
           label="Critical Active" 
           value={stats.critical} 
           isAlert={stats.critical > 0}
         />
         <StatCard 
-          icon={<Users className="text-green-500" />} 
-          label="Responders On-Duty" 
-          value={activeResponders.length} 
+          icon={<AlertCircle className="text-yellow-500" />} 
+          label="Unhandled Alerts" 
+          value={stats.unhandled} 
+          isAlert={stats.unhandled > 3}
+          trend="ACTION REQ"
         />
         <StatCard 
-          icon={<AlertTriangle className="text-yellow-500" />} 
-          label="Delayed Response" 
-          value={stats.pending} 
-          isAlert={stats.pending > 0}
+          icon={<Users className="text-blue-500" />} 
+          label="Available Units" 
+          value={volunteers.length} 
+        />
+        <StatCard 
+          icon={<CheckCircle2 className="text-green-500" />} 
+          label="Resolved Today" 
+          value={stats.resolved} 
         />
       </div>
 
@@ -190,19 +216,14 @@ export default function ResponderPanel() {
                  >
                    Resolve
                  </button>
-                 {incident.status !== 'resolved' && (
-                    <button 
-                      onClick={() => handleUpdate(incident.id, { 
-                        responderVehicleId: `UNIT-REASSIGN-${Math.floor(Math.random()*900)+100}`,
-                        status: 'assigned',
-                        urgency: 'critical',
-                        systemNote: 'Admin Force Reassigned'
-                      })}
-                      className="flex-1 py-2 bg-purple-900/20 text-purple-500 border border-purple-900/50 rounded-lg text-[8px] font-black uppercase hover:bg-purple-600 hover:text-white transition-all"
-                    >
-                      Force Reassign
-                    </button>
-                  )}
+                 {incident.status === 'reported' && (
+                   <button 
+                    onClick={() => handleUpdate(incident.id, { urgency: 'critical', status: 'allocating' })}
+                    className="flex-1 py-2 bg-red-900/20 text-red-500 border border-red-900/50 rounded-lg text-[8px] font-black uppercase hover:bg-red-600 hover:text-white transition-all"
+                   >
+                     Force Allocate
+                   </button>
+                 )}
               </div>
             </div>
           ))}

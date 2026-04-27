@@ -8,33 +8,22 @@ import { cn } from '../../lib/utils';
 
 export default function AmbulanceDashboard() {
   const [incidents, setIncidents] = useState<Incident[]>([]);
-  const [isAvailable, setIsAvailable] = useState(false);
   const user = auth.currentUser;
 
   useEffect(() => {
     if (!user) return;
 
-    // First, sync availability with Firestore
-    const syncAvailability = async () => {
-      try {
-        await updateDoc(doc(db, 'users', user.uid), { isAvailable });
-      } catch (err) {
-        console.error("Failed to sync availability", err);
-      }
-    };
-    syncAvailability();
-
-    if (!isAvailable) {
-      setIncidents([]);
-      return;
-    }
-
     // Listen for medical incidents
-    const q = collection(db, 'incidents');
+    const q = query(
+      collection(db, 'incidents'),
+      where('status', 'in', ['reported', 'allocating', 'assigned', 'on_the_way', 'reached'])
+    );
+
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Incident));
       const filtered = data.filter(i => 
-        (i.type === 'medical' && i.status !== 'resolved')
+        i.type === 'medical' || 
+        i.assignedResponderId === user.uid
       );
       setIncidents(filtered.sort((a, b) => b.createdAt?.seconds - a.createdAt?.seconds));
     }, (err) => {
@@ -42,7 +31,7 @@ export default function AmbulanceDashboard() {
     });
 
     return () => unsubscribe();
-  }, [user, isAvailable]);
+  }, [user]);
 
   const handleUpdateStatus = async (incidentId: string, status: Incident['status']) => {
     try {
@@ -97,19 +86,8 @@ export default function AmbulanceDashboard() {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 px-4">
         <div>
           <h2 className="text-2xl font-black text-white uppercase tracking-tighter">EMS <span className="text-green-500">Dispatch</span></h2>
-          <p className="text-[10px] text-gray-500 font-mono tracking-widest uppercase mt-1">Medical Provider: {isAvailable ? "Online" : "Off Duty"}</p>
+          <p className="text-[10px] text-gray-500 font-mono tracking-widest uppercase mt-1">Medical Provider: Online // Ready for Emergency</p>
         </div>
-        <button 
-          onClick={() => setIsAvailable(!isAvailable)}
-          className={cn(
-            "px-6 py-2 rounded-full font-black text-[10px] uppercase tracking-widest border transition-all",
-            isAvailable 
-              ? "bg-green-600/10 border-green-500 text-green-500 hover:bg-green-600/20" 
-              : "bg-red-600/10 border-red-500 text-red-500 hover:bg-red-600/20"
-          )}
-        >
-          {isAvailable ? "Set Off Duty" : "Go On Duty"}
-        </button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 px-4">
@@ -148,6 +126,14 @@ export default function AmbulanceDashboard() {
                 </div>
 
                 <div className="grid grid-cols-1 gap-2">
+                  {incident.status === 'reported' && (
+                    <button 
+                      onClick={() => handleUpdateStatus(incident.id, 'assigned')}
+                      className="w-full bg-green-600 hover:bg-green-700 text-white py-3 rounded-lg font-black text-[10px] uppercase tracking-widest transition-all"
+                    >
+                      Accept Medical Request
+                    </button>
+                  )}
                   {incident.status === 'assigned' && (
                     <button 
                       onClick={() => handleUpdateStatus(incident.id, 'on_the_way')}

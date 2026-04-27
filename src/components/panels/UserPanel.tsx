@@ -106,12 +106,9 @@ export default function UserPanel() {
       userId: auth.currentUser.uid,
       userName: auth.currentUser.displayName || "Emergency User",
       description: "PANIC ALERT: USER-TRIGGERED EMERGENCY",
-      type: 'medical',
+      type: 'other',
       urgency: 'critical',
-      status: 'assigned',
-      responderVehicleId: 'AMB-PANIC-01',
-      responderType: 'ambulance',
-      responderLocation: { lat: lat + 0.01, lng: lng + 0.01 },
+      status: 'reported',
       location: { lat, lng, address: "GPS PINPOINT LOCATION" },
       isPanic: true,
       createdAt: serverTimestamp()
@@ -191,19 +188,13 @@ export default function UserPanel() {
       const aiResponse = await classifyEmergency(report);
       const doorInfo = (document.getElementById('door-info') as HTMLInputElement)?.value || '';
       
-      const lat = location?.lat || 12.9716;
-      const lng = location?.lng || 77.5946;
-
       await addDoc(collection(db, 'incidents'), {
         userId: auth.currentUser.uid,
         userName: auth.currentUser.displayName,
         description: report,
-        type: aiResponse.type || 'volunteer',
+        type: aiResponse.type || 'other',
         urgency: aiResponse.urgency || 'medium',
-        status: 'assigned',
-        responderType: aiResponse.type || 'volunteer',
-        responderVehicleId: aiResponse.vehicleId || 'VOL-000',
-        responderLocation: { lat: lat + 0.01, lng: lng + 0.01 },
+        status: 'reported',
         location: location ? 
           { lat: location.lat, lng: location.lng, address: address, doorInfo } : 
           { address: address, doorInfo }, 
@@ -337,7 +328,7 @@ export default function UserPanel() {
               {selectedIncident.responderLocation && (
                 <Marker position={[selectedIncident.responderLocation.lat, selectedIncident.responderLocation.lng]} icon={vehicleIcon(selectedIncident.responderType || 'fire')}>
                   <Popup className="dark-popup">
-                    <span className="text-white font-bold">{selectedIncident.responderVehicleId || 'Vehicle'} is {selectedIncident.status.replace('_', ' ')}</span>
+                    <span className="text-white font-bold">Responder is {selectedIncident.status.replace('_', ' ')}</span>
                   </Popup>
                 </Marker>
               )}

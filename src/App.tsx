@@ -25,8 +25,7 @@ import FireDashboard from './components/panels/FireDashboard';
 import AmbulanceDashboard from './components/panels/AmbulanceDashboard';
 import AIAssistant from './components/AIAssistant';
 import { cn } from './lib/utils';
-import { handleFirestoreError } from './lib/errorHandlers';
-import { OperationType } from './types';
+import { handleFirestoreError, OperationType } from './lib/errorHandlers';
 
 type UserRole = 'user' | 'volunteer' | 'admin' | 'fire_station' | 'ambulance';
 
@@ -38,42 +37,36 @@ export default function App() {
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      try {
-        setUser(currentUser);
-        if (currentUser) {
-          // Fetch role from Firestore
-          try {
-            const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
-            if (userDoc.exists()) {
-              setRole(userDoc.data().role as UserRole);
-            } else {
-              // Default to user for new logins
-              const defaultRole: UserRole = 'user';
-              try {
-                await setDoc(doc(db, 'users', currentUser.uid), {
-                  email: currentUser.email,
-                  role: defaultRole,
-                  name: currentUser.displayName,
-                  createdAt: new Date()
-                });
-                setRole(defaultRole);
-              } catch (err) {
-                handleFirestoreError(err, OperationType.CREATE, `users/${currentUser.uid}`);
-              }
+      setUser(currentUser);
+      if (currentUser) {
+        // Fetch role from Firestore
+        try {
+          const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
+          if (userDoc.exists()) {
+            setRole(userDoc.data().role as UserRole);
+          } else {
+            // Default to user for new logins
+            const defaultRole: UserRole = 'user';
+            try {
+              await setDoc(doc(db, 'users', currentUser.uid), {
+                email: currentUser.email,
+                role: defaultRole,
+                name: currentUser.displayName,
+                createdAt: new Date()
+              });
+              setRole(defaultRole);
+            } catch (err) {
+              handleFirestoreError(err, OperationType.CREATE, `users/${currentUser.uid}`);
             }
-          } catch (error) {
-            handleFirestoreError(error, OperationType.GET, `users/${currentUser.uid}`);
-            setRole('user'); // Fallback
           }
-        } else {
-          setRole(null);
+        } catch (error) {
+          handleFirestoreError(error, OperationType.GET, `users/${currentUser.uid}`);
+          setRole('user'); // Fallback
         }
-      } catch (err) {
-        console.error("Auth state change failure:", err);
-      } finally {
-        // ALWAYS set loading to false to prevent blank screen
-        setLoading(false);
+      } else {
+        setRole(null);
       }
+      setLoading(false);
     });
     return () => unsubscribe();
   }, []);
