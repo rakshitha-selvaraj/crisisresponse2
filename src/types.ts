@@ -43,4 +43,7 @@ export interface Incident {
   assignedResponderId?: string;
   autoAssignedAt?: any;
   isPanic?: boolean;
+  isReassigned?: boolean;
+  reassignedAt?: any;
+  systemNote?: string;
 }
