@@ -5,20 +5,72 @@ import firebaseConfig from '../../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
 
-// Using initializeFirestore instead of getFirestore to enable long polling
+// Using initializeFirestore with refined settings for better connectivity in restricted environments
 export const db = initializeFirestore(app, {
   experimentalForceLongPolling: true,
+  host: "firestore.googleapis.com",
+  ssl: true,
 }, firebaseConfig.firestoreDatabaseId);
 
 export const auth = getAuth();
 
+export enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+export interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
+    }[];
+  }
+}
+
+export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData?.map(provider => ({
+        providerId: provider.providerId,
+        email: provider.email,
+      })) || []
+    },
+    operationType,
+    path
+  };
+  console.error('Firestore Error Details: ', JSON.stringify(errInfo, null, 2));
+  throw new Error(JSON.stringify(errInfo));
+}
+
 async function testConnection() {
+  const testPath = 'test/connection';
   try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
+    await getDocFromServer(doc(db, testPath));
     console.log("Firebase Connected Successfully");
   } catch (error) {
-    if(error instanceof Error && error.message.includes('the client is offline')) {
-      console.error("Please check your Firebase configuration.");
+    console.warn("Firestore connection check failed (initial boot). This might be normal if the document doesn't exist, but checking for connectivity errors...");
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes('unavailable') || message.includes('offline')) {
+      console.error("CRITICAL: Firestore is unavailable. Check your network or Firebase project configuration.");
     }
   }
 }
