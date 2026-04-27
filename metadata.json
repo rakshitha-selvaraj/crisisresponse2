@@ -2,7 +2,8 @@
   "name": "Aegis AI: Emergency Response System",
   "description": "An AI-powered crisis coordination platform featuring real-time incident tracking, automated AI prioritization, and smart resource allocation for users, volunteers, and emergency services.",
   "requestFramePermissions": [
-    "geolocation"
+    "geolocation",
+    "microphone"
   ],
   "majorCapabilities": [
     "AI-driven incident classification",

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { collection, addDoc, query, where, onSnapshot, orderBy, serverTimestamp } from 'firebase/firestore';
 import { db, auth } from '../../services/firebase';
 import { classifyEmergency } from '../../services/aiService';
-import { AlertCircle, Send, MapPin, Clock, CheckCircle2, Navigation, ShieldAlert, Truck, Bot, Activity } from 'lucide-react';
+import { AlertCircle, Send, MapPin, Clock, CheckCircle2, Navigation, ShieldAlert, Truck, Bot, Activity, Mic, MicOff } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { Incident } from '../../types';
 import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from 'react-leaflet';
@@ -47,6 +47,57 @@ export default function UserPanel() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [offlineQueue, setOfflineQueue] = useState<any[]>([]);
+  const [isListening, setIsListening] = useState(false);
+  const [recognition, setRecognition] = useState<any>(null);
+
+  useEffect(() => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      const recog = new SpeechRecognition();
+      recog.continuous = true;
+      recog.interimResults = true;
+      recog.lang = 'en-US';
+
+      recog.onresult = (event: any) => {
+        let transcript = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          transcript += event.results[i][0].transcript;
+        }
+        setReport(prev => {
+           // We only want to append if it's new content generally, 
+           // but for simple implementation we can just sync it
+           return transcript; 
+        });
+      };
+
+      recog.onend = () => {
+        setIsListening(false);
+      };
+
+      recog.onerror = (event: any) => {
+        console.error("Speech Recognition Error:", event.error);
+        setIsListening(false);
+      };
+
+      setRecognition(recog);
+    }
+  }, []);
+
+  const toggleListening = () => {
+    if (!recognition) {
+      alert("Speech recognition is not supported in your browser.");
+      return;
+    }
+
+    if (isListening) {
+      recognition.stop();
+      setIsListening(false);
+    } else {
+      setReport(''); // Clear previous report when starting new voice input
+      recognition.start();
+      setIsListening(true);
+    }
+  };
 
   // Monitor online/offline status
   useEffect(() => {
@@ -245,12 +296,41 @@ export default function UserPanel() {
                 <p className="text-gray-400 text-sm leading-relaxed mb-4 italic opacity-75">
                   "Hello, I am Gemma. Describe your emergency below."
                 </p>
-                <textarea
-                  value={report}
-                  onChange={(e) => setReport(e.target.value)}
-                  placeholder="Type your emergency details here..."
-                  className="w-full h-32 p-6 bg-black border border-gray-800 rounded-xl focus:ring-1 focus:ring-red-500 focus:border-red-500/50 resize-none transition-all placeholder:text-gray-700 text-gray-300 font-mono text-sm leading-relaxed"
-                />
+                <div className="relative group/voice">
+                  <textarea
+                    value={report}
+                    onChange={(e) => setReport(e.target.value)}
+                    placeholder="Type or speak your emergency details here..."
+                    className="w-full h-32 p-6 pr-16 bg-black border border-gray-800 rounded-xl focus:ring-1 focus:ring-red-500 focus:border-red-500/50 resize-none transition-all placeholder:text-gray-700 text-gray-300 font-mono text-sm leading-relaxed"
+                  />
+                  <button
+                    type="button"
+                    onClick={toggleListening}
+                    className={cn(
+                      "absolute top-4 right-4 p-3 rounded-lg transition-all duration-300 shadow-lg",
+                      isListening 
+                        ? "bg-red-600 text-white animate-pulse shadow-[0_0_15px_rgba(220,38,38,0.5)]" 
+                        : "bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700"
+                    )}
+                    title={isListening ? "Stop Voice Input" : "Start Voice Input"}
+                  >
+                    {isListening ? <MicOff size={20} /> : <Mic size={20} />}
+                    {isListening && (
+                      <span className="absolute -top-1 -right-1 block w-3 h-3 bg-red-400 rounded-full animate-ping" />
+                    )}
+                  </button>
+                  {isListening && (
+                    <div className="absolute bottom-4 left-6 flex items-center gap-2">
+                       <div className="flex gap-1 h-3 items-end">
+                          <div className="w-1 bg-red-500 animate-[bounce_1s_infinite_0ms]" style={{height: '60%'}}></div>
+                          <div className="w-1 bg-red-500 animate-[bounce_1s_infinite_200ms]" style={{height: '100%'}}></div>
+                          <div className="w-1 bg-red-500 animate-[bounce_1s_infinite_400ms]" style={{height: '80%'}}></div>
+                          <div className="w-1 bg-red-500 animate-[bounce_1s_infinite_600ms]" style={{height: '40%'}}></div>
+                       </div>
+                       <span className="text-[10px] font-black text-red-500 uppercase tracking-widest animate-pulse">Listening...</span>
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
