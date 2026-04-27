@@ -14,8 +14,8 @@ RUN npm install --omit=dev
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/server.js ./server.js
 
-# Expose the port Cloud Run uses
-ENV PORT=3000
-EXPOSE 3000
+# Cloud Run sets the PORT environment variable
+ENV PORT=8080
+EXPOSE 8080
 
 CMD ["node", "server.js"]
