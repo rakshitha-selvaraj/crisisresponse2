@@ -1,49 +1,69 @@
-export type UserRole = 'user' | 'volunteer' | 'admin' | 'fire_station' | 'ambulance';
+export enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
 
-export interface UserProfile {
-  uid: string;
-  email: string | null;
-  role: UserRole;
-  displayName: string | null;
-  photoURL: string | null;
-  currentLocation?: {
-    lat: number;
-    lng: number;
-  };
-  serviceType?: string;
-  isAvailable?: boolean;
+export interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
+    }[];
+  }
+}
+
+export interface Location {
+  lat: number;
+  lng: number;
+  address?: string;
+  doorInfo?: string;
 }
 
 export interface Incident {
   id: string;
-  userId: string;
-  userName?: string;
-  description: string;
-  type: string;
+  type: 'medical' | 'fire' | 'police' | 'volunteer' | 'other';
   urgency: 'low' | 'medium' | 'high' | 'critical';
   status: 'reported' | 'allocating' | 'assigned' | 'on_the_way' | 'reached' | 'resolved';
-  location: {
-    lat: number;
-    lng: number;
-    address?: string;
-    doorInfo?: string;
-  };
+  description: string;
+  location: Location;
+  createdAt: any;
+  updatedAt: any;
+  assignedResponderId?: string;
+  responderType?: string;
   responderLocation?: {
     lat: number;
     lng: number;
   };
-  responderType?: 'fire' | 'ambulance' | 'volunteer';
-  responderVehicleId?: string;
-  createdAt: any;
-  updatedAt?: any;
-  aiReportSummary?: string;
-  aiPrioritization?: string;
-  escalatedAt?: any;
-  assignedVolunteerId?: string;
-  assignedResponderId?: string;
-  autoAssignedAt?: any;
-  isPanic?: boolean;
   isReassigned?: boolean;
-  reassignedAt?: any;
+  isReassignedFrom?: string;
   systemNote?: string;
+  responderVehicleId?: string;
+  aiClassification?: string;
+  aiPriority?: number;
+}
+
+export interface UserProfile {
+  uid: string;
+  email: string;
+  role: 'user' | 'volunteer' | 'admin' | 'fire_station' | 'ambulance';
+  name: string;
+  createdAt: any;
+  isAvailable?: boolean;
+  currentLocation?: {
+    lat: number;
+    lng: number;
+  };
+  specialties?: string[];
 }

@@ -14,65 +14,23 @@ export const db = initializeFirestore(app, {
 
 export const auth = getAuth();
 
-export enum OperationType {
-  CREATE = 'create',
-  UPDATE = 'update',
-  DELETE = 'delete',
-  LIST = 'list',
-  GET = 'get',
-  WRITE = 'write',
-}
-
-export interface FirestoreErrorInfo {
-  error: string;
-  operationType: OperationType;
-  path: string | null;
-  authInfo: {
-    userId?: string | null;
-    email?: string | null;
-    emailVerified?: boolean | null;
-    isAnonymous?: boolean | null;
-    tenantId?: string | null;
-    providerInfo?: {
-      providerId?: string | null;
-      email?: string | null;
-    }[];
-  }
-}
-
-export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
-    authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
-      providerInfo: auth.currentUser?.providerData?.map(provider => ({
-        providerId: provider.providerId,
-        email: provider.email,
-      })) || []
-    },
-    operationType,
-    path
-  };
-  console.error('Firestore Error Details: ', JSON.stringify(errInfo, null, 2));
-  throw new Error(JSON.stringify(errInfo));
-}
+// Import shared types for the test connection check
+import { OperationType } from '../types';
 
 async function testConnection() {
   const testPath = 'test/connection';
   try {
+    // getDocFromServer bypasses the cache and goes directly to the backend
     await getDocFromServer(doc(db, testPath));
     console.log("Firebase Connected Successfully");
   } catch (error) {
-    console.warn("Firestore connection check failed (initial boot). This might be normal if the document doesn't exist, but checking for connectivity errors...");
+    console.warn("Firestore connection check info:", error);
     const message = error instanceof Error ? error.message : String(error);
     if (message.includes('unavailable') || message.includes('offline')) {
-      console.error("CRITICAL: Firestore is unavailable. Check your network or Firebase project configuration.");
+      console.error("CRITICAL: Firestore is unavailable. This may cause a blank screen if initial data fetching hangs.");
     }
   }
 }
 
-testConnection();
+// Run test connection without blocking
+testConnection().catch(err => console.error("Firebase connection test failed to even run:", err));
