@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { collection, query, where, onSnapshot, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db, auth } from '../../services/firebase';
-import { Incident } from '../../types';
-import { MapPin, Navigation, CheckCircle2, AlertCircle, Clock, X, Info } from 'lucide-react';
+import { Incident, UserProfile } from '../../types';
+import { MapPin, Navigation, CheckCircle2, AlertCircle, Clock, X, Info, Zap } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { handleFirestoreError, OperationType } from '../../lib/errorHandlers';
+import { calculateDistance, calculateETA } from '../../lib/locationUtils';
 
 export default function VolunteerPanel() {
   const [tasks, setTasks] = useState<Incident[]>([]);
+  const [responders, setResponders] = useState<UserProfile[]>([]);
   const [acceptedTask, setAcceptedTask] = useState<Incident | null>(null);
   const user = auth.currentUser;
 
@@ -32,6 +34,43 @@ export default function VolunteerPanel() {
 
     return () => unsubscribe();
   }, [user]);
+
+  // Listen for available volunteers
+  useEffect(() => {
+    const q = query(
+      collection(db, 'users'),
+      where('role', '==', 'volunteer')
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs.map(doc => doc.data() as UserProfile);
+      setResponders(data.filter(r => r.currentLocation));
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  const getNearestResponderSuggestion = (incident: Incident) => {
+    if (!incident.location?.lat || responders.length === 0) return null;
+
+    const availableResponders = responders.filter(r => 
+      r.role === 'volunteer'
+    );
+
+    if (availableResponders.length === 0) return null;
+
+    const suggestions = availableResponders.map(r => {
+      const dist = calculateDistance(
+        incident.location.lat, 
+        incident.location.lng, 
+        r.currentLocation!.lat, 
+        r.currentLocation!.lng
+      );
+      return { responder: r, distance: dist, eta: calculateETA(dist, 15) }; // Volunteers walk/bike slow
+    }).sort((a, b) => a.distance - b.distance);
+
+    return suggestions[0];
+  };
 
   const handleAction = async (task: Incident, newStatus: string) => {
     if (!user) return;
@@ -125,6 +164,25 @@ export default function VolunteerPanel() {
             <p className="text-xs text-gray-400 font-mono leading-relaxed italic mb-8 bg-black/40 p-4 rounded-lg border-l-2 border-l-blue-600">
               "{task.description}"
             </p>
+
+            {task.status === 'reported' && (
+              <div className="mb-8 p-4 bg-blue-500/5 rounded-xl border border-blue-500/10">
+                <div className="flex items-center gap-2 mb-2">
+                   <Zap size={14} className="text-blue-500 fill-blue-500" />
+                   <span className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-400">Response Guidance</span>
+                </div>
+                {getNearestResponderSuggestion(task) ? (
+                  <div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-[11px] font-bold text-gray-300">{getNearestResponderSuggestion(task)?.responder.displayName || 'Neighbor'}</span>
+                      <span className="text-[10px] font-mono text-blue-400 font-bold">ETA: {getNearestResponderSuggestion(task)?.eta}M</span>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-[10px] text-gray-600 italic">Finding available neighbors...</p>
+                )}
+              </div>
+            )}
 
             <div className="space-y-3 mb-10">
               <div className="flex items-center gap-3 text-[10px] font-mono text-gray-500">

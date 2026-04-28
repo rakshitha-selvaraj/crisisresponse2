@@ -3,11 +3,13 @@ import { collection, query, where, onSnapshot, doc, updateDoc, serverTimestamp }
 import { db, auth } from '../../services/firebase';
 import { Incident, UserProfile } from '../../types';
 import { handleFirestoreError, OperationType } from '../../lib/errorHandlers';
-import { ShieldAlert, MapPin, Clock, CheckCircle, Navigation } from 'lucide-react';
+import { calculateDistance, calculateETA } from '../../lib/locationUtils';
+import { ShieldAlert, MapPin, Clock, CheckCircle, Navigation, Zap } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 export default function FireDashboard() {
   const [incidents, setIncidents] = useState<Incident[]>([]);
+  const [responders, setResponders] = useState<UserProfile[]>([]);
   const user = auth.currentUser;
 
   useEffect(() => {
@@ -33,6 +35,43 @@ export default function FireDashboard() {
 
     return () => unsubscribe();
   }, [user]);
+
+  // Listen for available fire responders
+  useEffect(() => {
+    const q = query(
+      collection(db, 'users'),
+      where('role', '==', 'fire_station')
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs.map(doc => doc.data() as UserProfile);
+      setResponders(data.filter(r => r.currentLocation));
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  const getNearestResponderSuggestion = (incident: Incident) => {
+    if (!incident.location?.lat || responders.length === 0) return null;
+
+    const availableResponders = responders.filter(r => 
+      r.role === 'fire_station'
+    );
+
+    if (availableResponders.length === 0) return null;
+
+    const suggestions = availableResponders.map(r => {
+      const dist = calculateDistance(
+        incident.location.lat, 
+        incident.location.lng, 
+        r.currentLocation!.lat, 
+        r.currentLocation!.lng
+      );
+      return { responder: r, distance: dist, eta: calculateETA(dist) };
+    }).sort((a, b) => a.distance - b.distance);
+
+    return suggestions[0];
+  };
 
   const handleUpdateStatus = async (incidentId: string, status: Incident['status']) => {
     try {
@@ -116,6 +155,28 @@ export default function FireDashboard() {
                 
                 <h3 className="text-lg font-bold text-white mb-2">{incident.location?.address || 'Geolocation Fix'}</h3>
                 <p className="text-gray-500 text-xs mb-6 line-clamp-2 italic">"{incident.description}"</p>
+
+                {incident.status === 'reported' && (
+                  <div className="mb-6 p-4 bg-orange-500/5 rounded-lg border border-orange-500/20">
+                    <div className="flex items-center gap-2 mb-2">
+                       <Zap size={14} className="text-orange-500 fill-orange-500" />
+                       <span className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-400">Tactical Suggestion</span>
+                    </div>
+                    {getNearestResponderSuggestion(incident) ? (
+                      <div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-[11px] font-bold text-gray-300">{getNearestResponderSuggestion(incident)?.responder.displayName || 'Engine Co.'}</span>
+                          <span className="text-[10px] font-mono text-orange-500 font-bold">ETA: {getNearestResponderSuggestion(incident)?.eta}M</span>
+                        </div>
+                        <p className="text-[9px] text-gray-600 mt-1 uppercase tracking-widest font-mono">
+                           Range: {getNearestResponderSuggestion(incident)?.distance.toFixed(2)} KM
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-[10px] text-gray-600 italic">No available units in range...</p>
+                    )}
+                  </div>
+                )}
 
                 <div className="space-y-3 mb-8">
                   <div className="flex items-center gap-3 text-[10px] text-gray-400 font-mono">

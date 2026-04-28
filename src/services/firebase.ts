@@ -9,13 +9,16 @@ export const auth = getAuth();
 
 async function testConnection() {
   try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
-    console.log("Firebase Connected Successfully");
-  } catch (error) {
-    if(error instanceof Error && error.message.includes('the client is offline')) {
-      console.error("Please check your Firebase configuration.");
+    // Attempting to fetch a dummy document from the server to verify connectivity
+    await getDocFromServer(doc(db, 'system', 'connection_test'));
+    console.log("✅ Firebase Connected Successfully");
+  } catch (error: any) {
+    console.error("❌ Firebase Connection Status:", error.message);
+    if (error.code === 'unavailable') {
+      console.warn("The Firestore backend is currently unreachable. This usually resolves automatically once the database is fully provisioned or internet connectivity is stable.");
     }
   }
 }
 
+// Run connection test on initialization
 testConnection();

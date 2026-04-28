@@ -8,6 +8,7 @@ import { ShieldAlert, Activity, Users, Map as MapIcon, Siren, TrendingUp, Target
 import { cn } from '../../lib/utils';
 import { Incident, UserProfile } from '../../types';
 import { handleFirestoreError, OperationType } from '../../lib/errorHandlers';
+import { calculateDistance, calculateETA } from '../../lib/locationUtils';
 
 // Custom icons
 const createUrgencyIcon = (urgency: string) => {
@@ -60,6 +61,7 @@ function MapRefocuser({ incidents }: { incidents: Incident[] }) {
 export default function ResponderPanel() {
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [volunteers, setVolunteers] = useState<UserProfile[]>([]);
+  const [responders, setResponders] = useState<UserProfile[]>([]);
   const [stats, setStats] = useState({
     active: 0,
     critical: 0,
@@ -112,13 +114,42 @@ export default function ResponderPanel() {
   }, []);
 
   useEffect(() => {
-    const q = query(collection(db, 'users'), where('role', '==', 'volunteer'));
+    const q = query(collection(db, 'users'), where('role', 'in', ['volunteer', 'fire_station', 'ambulance']));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map(doc => doc.data() as UserProfile);
-      setVolunteers(data);
+      setResponders(data.filter(r => r.currentLocation));
+      setVolunteers(data.filter(r => r.role === 'volunteer'));
     });
     return () => unsubscribe();
   }, []);
+
+  const getNearestResponderSuggestion = (incident: Incident) => {
+    if (!incident.location?.lat || responders.length === 0) return null;
+
+    // Filter by type matching if possible
+    let relevantResponders = responders;
+    if (incident.type === 'medical') {
+      relevantResponders = responders.filter(r => r.role === 'ambulance');
+    } else if (incident.type === 'fire') {
+      relevantResponders = responders.filter(r => r.role === 'fire_station');
+    } else if (incident.type === 'volunteer') {
+      relevantResponders = responders.filter(r => r.role === 'volunteer');
+    }
+
+    if (relevantResponders.length === 0) relevantResponders = responders; // Fallback to any
+
+    const suggestions = relevantResponders.map(r => {
+      const dist = calculateDistance(
+        incident.location.lat, 
+        incident.location.lng, 
+        r.currentLocation!.lat, 
+        r.currentLocation!.lng
+      );
+      return { responder: r, distance: dist, eta: calculateETA(dist) };
+    }).sort((a, b) => a.distance - b.distance);
+
+    return suggestions[0];
+  };
 
   const handleUpdate = async (id: string, updates: Partial<Incident>) => {
     try {
@@ -180,8 +211,20 @@ export default function ResponderPanel() {
             <span className="text-[9px] font-mono text-gray-700">{incidents.length} ENTRIES</span>
           </div>
           
-          {incidents.map((incident) => (
-            <div key={incident.id} className={cn(
+          {incidents.length === 0 ? (
+            <div className="py-12 px-6 bg-[#121418] border border-dashed border-gray-800 rounded-2xl flex flex-col items-center justify-center text-center animate-in fade-in zoom-in duration-1000">
+              <ShieldAlert size={32} className="text-gray-900 mb-4" />
+              <p className="text-[10px] font-black uppercase tracking-[0.3em] text-gray-600 mb-1">Queue Standby</p>
+              <p className="text-[11px] text-gray-700 font-mono italic leading-relaxed">System is active. Watching for priority alerts...</p>
+              <div className="mt-6 flex gap-1 h-1 items-center">
+                <div className="w-1 h-1 bg-gray-800 rounded-full animate-bounce"></div>
+                <div className="w-1 h-1 bg-gray-800 rounded-full animate-bounce delay-100"></div>
+                <div className="w-1 h-1 bg-gray-800 rounded-full animate-bounce delay-200"></div>
+              </div>
+            </div>
+          ) : (
+            incidents.map((incident) => (
+              <div key={incident.id} className={cn(
               "p-5 rounded-xl bg-[#0F1115] border border-gray-800 hover:border-gray-700 transition-all group",
               incident.urgency === 'critical' && incident.status !== 'resolved' && "ring-1 ring-red-500/50 bg-red-950/10",
               incident.status === 'reported' && "border-yellow-500/30"
@@ -209,6 +252,18 @@ export default function ResponderPanel() {
               <h4 className="text-[12px] font-bold text-white mb-2 uppercase tracking-tight">{incident.location.address || "Unknown Point"}</h4>
               <p className="text-[10px] text-gray-500 mb-6 leading-relaxed italic line-clamp-2">"{incident.description}"</p>
               
+              {incident.status === 'reported' && (
+                <div className="mb-4 p-3 bg-red-500/5 border border-red-500/10 rounded-lg">
+                   <div className="flex justify-between items-center mb-1">
+                      <span className="text-[8px] font-black uppercase text-red-400">Nearest Unit Suggestion</span>
+                      <span className="text-[8px] font-mono text-red-500 font-bold">{getNearestResponderSuggestion(incident)?.eta}M ETA</span>
+                   </div>
+                   <p className="text-[10px] text-gray-300 font-bold truncate">
+                      {getNearestResponderSuggestion(incident)?.responder.displayName || "Calculating..."}
+                   </p>
+                </div>
+              )}
+
               <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                  <button 
                   onClick={() => handleUpdate(incident.id, { status: 'resolved' })}
@@ -226,7 +281,7 @@ export default function ResponderPanel() {
                  )}
               </div>
             </div>
-          ))}
+          )))}
         </div>
 
         {/* Tactical Map */}

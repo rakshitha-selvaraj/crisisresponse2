@@ -68,6 +68,15 @@
     "incidents/{incidentId}": {
       "schema": "Incident",
       "description": "Collection of all emergency incidents."
+    },
+    "system/connection_test": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string" }
+        }
+      },
+      "description": "Used for verifying database connectivity on app startup."
     }
   }
 }
